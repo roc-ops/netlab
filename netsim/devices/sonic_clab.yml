@@ -20,8 +20,16 @@ parent: sonic
 support:
   level: minimal
   caveats:
-  - docker-sonic-vs ships no sshd; configuration is pushed through Ansible's 'docker' connection
-    plugin (docker exec), not SSH -- see clab.group_vars.ansible_connection below.
+  - >-
+    Config deployment uses Ansible's 'docker' connection plugin (docker exec), not network_cli:
+    docker-sonic-vs has no cliconf-compatible CLI (the only Ansible SONiC cliconf,
+    dellemc.enterprise_sonic, targets Dell's licensed klish/Management-Framework CLI, which this
+    image doesn't ship -- verified). See templates/initial/sonic_clab.j2 for the full writeup.
+  - >-
+    docker-sonic-vs ships sshd + host keys but starts neither sshd nor a login user;
+    templates/initial/sonic_clab.j2 bootstraps both (admin / ansible_ssh_pass below) for
+    interactive access ('netlab connect', ad-hoc troubleshooting) -- SSH is NOT used for config
+    deployment, only ansible_connection: docker is.
   - docker-sonic-vs is a monolithic single container (FRR vtysh runs directly); this differs from
     the multi-container architecture of the full SONiC VM used by the parent 'sonic' device, so
     initial/bgp templates are NOT shared with the parent device and are provided here instead.
@@ -44,7 +52,8 @@ clab:
   group_vars:
     ansible_connection: docker
     ansible_user: root
-    netlab_ready: [ ansible ]                          # skip the SSH readiness wait (no sshd)
+    ansible_ssh_pass: YourPaSsWoRd                     # bootstrapped 'admin' login, interactive use only
+    netlab_ready: [ ansible ]                          # skip the SSH readiness wait (sshd isn't up yet)
     netlab_show_command: [ vtysh, -c, 'show $@' ]
 features:
   initial:
