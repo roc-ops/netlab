@@ -5,11 +5,13 @@ support:
   caveats:
   - OcNOS CLI (cmlsh) has no non-interactive exec mode; use the ipinfusion.ocnos
     Ansible collection (network_cli) for config push/fetch, not raw SSH commands.
-  - OSPF/OSPFv3 network-membership changes on an already-running process return a
-    non-empty commit notice ("Use 'clear ip[v6] ospf process'...") that the
-    ocnos_config module treats as a failed task, aborting later modules for that
-    host in the same play. Run 'netlab initial' a second time after the first OSPF
-    network/area change on a node to let subsequent modules deploy.
+  - The out-of-tree reference implementation documented OSPF/OSPFv3 network-membership
+    changes on an already-running process as returning a non-empty commit notice that
+    ocnos_config treats as a failed task, aborting later modules in the same play. Not
+    reproduced against this in-tree device across 3 targeted attempts (area renumber,
+    new network on a running process with isis queued after, isolated config push) --
+    see docs/caveats.md for details. If you do hit a stalled deploy after an OSPF
+    topology change, re-run 'netlab initial' once as a fallback.
 interface_name: eth{ifindex}
 ifindex_offset: 1
 mgmt_if: eth0
