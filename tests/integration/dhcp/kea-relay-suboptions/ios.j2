@@ -1,0 +1,6 @@
+! Cisco relays default to PROPRIETARY option-82 suboptions (150/151/152) with
+! "ip dhcp relay information option vpn". Third-party servers (Kea) only understand
+! the RFC 3527/5107 standard ones (5/11) -- without this, inter-VRF relayed requests
+! arrive with a global giaddr and an unreadable link-selection, and Kea NAKs them.
+ip dhcp compatibility suboption link-selection standard
+ip dhcp compatibility suboption server-override standard

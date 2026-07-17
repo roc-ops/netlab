@@ -1,0 +1,51 @@
+# ISC Kea -- DHCPv4/DHCPv6 server with a REST control agent, as a netlab daemon device.
+#
+# Modeled on netlab's own dnsmasq daemon (netsim/daemons/dnsmasq.yml), the only other
+# built-in DHCP-server daemon. dnsmasq is libvirt-only; kea adds clab support (there is
+# no clab-provider DHCP-server node otherwise) plus DHCPv6 and VRF-aware relay handling
+# via the pools' user-context. netsim/daemons/kea/dhcp.j2 renders netlab's computed
+# dhcp.pools (v4 and v6) into /etc/kea/kea-dhcp{4,6}.conf and reloads the running
+# daemons through the control agent's REST API (no restart needed).
+description: ISC Kea DHCP server (DHCPv4 + DHCPv6, REST control agent)
+node:
+  module: [ dhcp ]
+dhcp:
+  server: true
+clab:
+  group_vars:
+    docker_shell: bash
+  image: netlab/kea:latest
+  build: True
+  features:
+    initial:
+      roles: [ host ]
+      config_mode: [ sh ]
+
+libvirt:                        # Not yet available on libvirt
+  image:
+
+features:
+  dhcp:
+    server: true
+    vrf: true             # inter-VRF DHCP RELAY awareness (see dhcp.j2's pool.vrf
+                           # user-context) -- NOT the same as declaring the netlab
+                           # `vrf` module itself (see below).
+  initial:
+    reload: false
+    roles: [ host ]
+
+# Deliberately NOT declaring `features.vrf` (module support for the netlab `vrf`
+# module) -- proven, not just omitted. `module: [dhcp, vrf]` on a kea node fails
+# fast with "Device type kea does not support module vrf" (same as netlab's own
+# dnsmasq daemon, which also has no vrf feature). This is a netlab-core/host-role
+# boundary, not a kea-specific gap: the `vrf` module's rendering path
+# (netsim/ansible/templates/vrf/*.j2) is ENTIRELY per-NOS routing-protocol VRF
+# config (ospfv2-vrf/ospfv3-vrf etc.); the only non-routing-protocol vrf templates
+# in the whole tree are BIRD's (netsim/daemons/bird/vrf-*.j2), because BIRD is
+# itself a routing daemon. There is no generic "create a Linux VRF-lite device and
+# move an interface into it" path anywhere in netlab (module, clab provider, or
+# template layer) for a role:host node with no routing engine -- so a
+# directly-attached (non-relayed) client in a VRF is genuinely out of reach for
+# any host-role daemon, kea included. VRF awareness for kea only exists on the
+# RELAY side (see tests/integration/dhcp/50-kea-relay.yml): the relay does the
+# real VRF work and kea just reads giaddr + the relay's standard suboptions.
