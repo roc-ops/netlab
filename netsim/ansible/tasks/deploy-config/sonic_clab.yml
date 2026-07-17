@@ -1,0 +1,31 @@
+# SONiC (containerlab, docker-sonic-vs) config deploy.
+#
+# Reached over Ansible's 'docker' connection plugin (ansible_connection: docker in
+# sonic_clab.yml), so 'command'/'shell' here already execute *inside* the node container --
+# no docker exec wrapping needed, unlike our out-of-tree delegate_to:localhost implementation.
+#
+# SONiC config is either a bash script of 'config' CLI commands (initial: starts with
+# #!/bin/bash) or an FRR vtysh config (routing modules), same convention as the package
+# 'frr'/'sonic' devices.
+- template:
+    src: "{{ config_template }}"
+    dest: /tmp/config.sh
+
+- set_fact: deployed_config={{ lookup('template',config_template) }}
+
+- name: "run /tmp/config.sh to deploy {{ netsim_action }} config from {{ config_template }}"
+  command: bash /tmp/config.sh
+  when: not ansible_check_mode and ("#!/bin/bash" in deployed_config or "#!/bin/sh" in deployed_config)
+
+- name: "strip 'no router ...' reset lines FRR mgmtd rejects before the process is configured, then vtysh -f"
+  # FRR 10.5's mgmtd on docker-sonic-vs rejects a bare 'no router <proto>' (rc 13) when that
+  # protocol has never been configured, aborting the whole vtysh -f. Our <module>/sonic_clab.j2
+  # templates emit one of these reset lines before re-declaring the protocol, so strip it here
+  # rather than special-case every module template. Harmless once the protocol IS configured
+  # (the line is simply absent from later deploys' rendered diff... when present, still stripped).
+  shell: |
+    grep -vE '^no router ' /tmp/config.sh >/tmp/config.frr.sh
+    vtysh -f /tmp/config.frr.sh
+  args:
+    executable: /bin/bash
+  when: not ansible_check_mode and not ("#!/bin/bash" in deployed_config or "#!/bin/sh" in deployed_config)

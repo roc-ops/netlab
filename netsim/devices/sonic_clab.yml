@@ -1,0 +1,68 @@
+# SONiC on containerlab (docker-sonic-vs) — issue #40 / part of #37.
+#
+# netlab ships a `sonic` device that is LIBVIRT-ONLY (a full multi-container SONiC VM: FRR runs
+# in a nested "bgp" sub-container, reached via `docker exec bgp vtysh`). This is a SEPARATE
+# device for the community `docker-sonic-vs` image on containerlab, which is a MONOLITHIC single
+# container: FRR's vtysh runs directly in the container's own namespace (no nested "bgp"
+# container), and there is no sshd. We inherit interface naming / loopback naming / the base
+# BGP feature set from `sonic` via `parent`, and add a `clab:` block that uses Ansible's built-in
+# `docker` connection plugin (the same pattern already used in-tree by the `frr` and
+# `cumulus_nvue` clab devices) instead of SSH — this is the netlab-idiomatic way to configure a
+# clab container with no running sshd, and replaces the raw `delegate_to: localhost` +
+# `docker exec` scripting used by our out-of-tree reference implementation
+# (roccontlab netlab/sonic/).
+#
+# docker-sonic-vs also ships most FRR daemons disabled by default (bgpd/ospfd/ospf6d/isisd/...
+# =no in /etc/frr/daemons) to save resources; templates/initial/sonic_clab.j2 flips on the
+# daemons needed by the configured modules and restarts FRR once, idempotently.
+description: SONiC (containerlab, docker-sonic-vs)
+parent: sonic
+support:
+  level: minimal
+  caveats:
+  - docker-sonic-vs ships no sshd; configuration is pushed through Ansible's 'docker' connection
+    plugin (docker exec), not SSH -- see clab.group_vars.ansible_connection below.
+  - docker-sonic-vs is a monolithic single container (FRR vtysh runs directly); this differs from
+    the multi-container architecture of the full SONiC VM used by the parent 'sonic' device, so
+    initial/bgp templates are NOT shared with the parent device and are provided here instead.
+group_vars:
+  netlab_device_type: sonic_clab
+  netlab_frr_daemons:            # module -> FRR daemons to enable in /etc/frr/daemons (default: no)
+    bgp: [ bgpd ]
+    ospf: [ ospfd, ospf6d ]
+    isis: [ isisd ]
+    bfd: [ bfdd ]
+    ripv2: [ ripd ]
+    vrf: [ bgpd ]
+    gateway: [ vrrpd ]
+    mpls: [ ldpd ]
+clab:
+  image: docker-sonic-vs:latest
+  mtu: 1500
+  node:
+    kind: sonic-vs
+  group_vars:
+    ansible_connection: docker
+    ansible_user: root
+    netlab_ready: [ ansible ]                          # skip the SSH readiness wait (no sshd)
+    netlab_show_command: [ vtysh, -c, 'show $@' ]
+features:
+  initial:
+    collect: false        # config fetch not ported yet in this increment (tracked for a follow-up)
+  bgp:
+    import: [ connected, static, ospf ]
+    advertise: true
+    password: true
+    timers: true
+    gtsm: true
+    passive: true
+    multihop:
+      vrf: true
+  ospf:
+    unnumbered: true
+    default: true
+    areas: true
+    timers: true
+    priority: true
+    password: true
+graphite.icon: switch
