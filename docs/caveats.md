@@ -56,6 +56,20 @@ nodes:
 * Arista EOS virtual machines and containers use [proprietary control-plane messages to indicate the loss of Ethernet line protocol](https://blog.ipspace.net/2025/03/arista-spooky-action-distance/). Set the **netlab_phy_control** node variable to *False* to disable this functionality.
 * Device configurations that contain `no lldp transmit` or `no lldp receive` configuration command trigger configuration reload failures due to an Arista EOS bug ([more details](https://github.com/ipspace/netlab/issues/2577)). These commands are thus automatically removed from collected device configurations.
 
+(caveats-arcos)=
+## Arrcus ArcOS
+
+* Config deployment uses Ansible's **docker** connection plugin (running `confd_cli` directly inside the container), not `network_cli`. The official `arrcus.arcos` Ansible collection (Galaxy, versions 2.0.13-2.0.18 checked -- the full set published as of this writing) is the project-recommended `network_cli` model per its own documentation, but every version hangs against this ArcOS build: its cliconf plugin sends `arcos_cli` and `config terminal` as its first commands, both of which this platform's `confd_cli` rejects with a syntax error. Switch `ansible_connection`/`ansible_network_os` back to the commented-out `network_cli` block in `netsim/devices/arcos.yml` once a working collection version ships.
+* The `arcos:8.2.1A.P2` container image's baked-in startup configuration fails to load (it tries to delete the built-in, non-deletable martian prefix-sets), so SSH/NETCONF/gNMI all boot disabled. *netlab* bootstraps management (enable SSH, change the factory-default admin-user password -- required before ArcOS will enable *any* interface, create an AAA login user) via a `netlab_start_exec`/`clab.exec` post-start command, before any Ansible connection is attempted.
+* Cross-vendor OSPF adjacencies against FRR probe nodes do not currently converge (they stall in `NEIGHBOR_EXSTART`) -- root-caused to a default veth MTU mismatch between the `arrcus_arcos` and `frr` containerlab kinds (8974 vs 1500); ArcOS's own `interface mtu` config leaf does not override whatever MTU value its OSPF process actually checks. ArcOS-to-ArcOS and per-VRF OSPF/ISIS/BGP all converge correctly.
+* EVPN symmetric IRB / L3VNI (`vrfs.<name>.evpn.transit_vni`) renders and commits cleanly but the control plane never originates a route-type-5 prefix, so it is not declared as supported; only the L2VNI / distributed-anycast-gateway EVPN form is.
+* VRF route-target import/export leaking between VRFs is not supported -- there is no RD/RT/L3VPN model on this image outside the (working) per-VLAN EVPN MAC-VRF and (non-functional) per-VRF symmetric-IRB forms above.
+* OSPFv2 area-interface authentication is advertised in the CLI help but rejected on commit for every value form tried.
+* `routing-policy` can only set standard BGP communities inline; there is no set-large-community or set-extended-community action.
+* BGP/OSPF/IS-IS redistribution only supports `static` as an import source -- `connected` has no addressable source instance for OpenConfig `table-connection` redistribution on this image.
+* SR-MPLS/LDP bring up the control plane only (sessions, FEC/label bindings, prefix-SIDs) -- the native container image has no kernel MPLS platform-labels, so label forwarding cannot be tested.
+* A protocol instance tag (`p1`, `i1`) is a global namespace across every `network-instance` on this ArcOS build, not scoped per network-instance -- a VRF's OSPF/IS-IS instance must use a tag distinct from the default instance's (or another VRF's) same-protocol instance.
+
 (caveats-aruba)=
 ## Aruba AOS-CX
 
