@@ -19,7 +19,11 @@ set -e
 cat > /etc/kea/kea-dhcp4.conf <<'KEACONF'
 {
   "Dhcp4": {
-    "interfaces-config": { "interfaces": [ "*" ] },
+    "interfaces-config": { "interfaces": [
+{% for intf in interfaces|default([]) if intf.ifname != 'eth0' and intf.ipv4 is defined %}
+      "{{ intf.ifname }}"{{ "," if not loop.last }}
+{% endfor %}
+    ] },
     "control-socket": {
       "socket-type": "unix",
       "socket-name": "/var/run/kea/kea4-ctrl-socket"

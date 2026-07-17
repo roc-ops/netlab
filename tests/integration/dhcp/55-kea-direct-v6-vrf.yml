@@ -1,0 +1,55 @@
+---
+# Direct-attach DHCPv6 with the client AND kea's own interface inside a VRF (no
+# relay). The v6 companion to 54-kea-direct-v4-vrf.yml: proves the kea daemon's
+# Linux VRF-lite support (netsim/daemons/kea/vrf.j2 + the ip-vrf-exec launcher in
+# netsim/daemons/kea/Dockerfile) also carries the DHCPv6 path. v6 is the harder
+# case -- kea's v6 sockets are plain UDP bound to the interface's link-local /
+# global address, which can only bind a VRF-local address once the daemon runs
+# inside the VRF (ip vrf exec sets SO_BINDTODEVICE); the raw-socket shortcut that
+# v4 enjoys does not exist for v6.
+message: |
+  Increment-3 (v6): direct-attach DHCPv6 with the client AND kea's own interface
+  inside VRF red (no relay). kea sets up Linux VRF-lite, enslaves its data
+  interface, runs its DHCPv6 daemon under ip-vrf-exec, and serves from within the
+  VRF. c1 should get an IPv6 address (CAFE prefix) directly from kea.
+
+defaults.sources.extra: [ ../wait_times.yml, ../warnings.yml ]
+
+provider: clab
+plugin: [ multilab ]
+defaults.multilab.id: 55
+
+addressing.lan:
+  ipv4: false
+  ipv6: 2001:db8:cafe::/48
+
+defaults.device: iol
+defaults.devices.iol.clab.image: vrnetlab/cisco_iol:17.18.02
+
+vrfs:
+  red:
+
+nodes:
+  c1:
+  dut:
+    device: kea
+    module: [ dhcp, vrf ]
+    dhcp.server: true
+
+links:
+- c1:
+    ipv6: dhcp
+  dut:
+  vrf: red
+
+validate:
+  lease_v6_vrf:
+    description: Check for DHCPv6 address assignment (direct-attach, in VRF red)
+    wait: 60
+    wait_msg: Waiting for DHCPv6 to complete
+    nodes: [ c1 ]
+    devices: [ iol ]
+    pass: c1 got an IPv6 address directly from kea inside VRF red
+    fail: No IPv6 address assigned
+    exec: "show ipv6 interface brief {{ interfaces[0].ifname }}"
+    valid: "'CAFE' in stdout"

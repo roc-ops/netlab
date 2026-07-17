@@ -1,23 +1,15 @@
 ---
-# NOT a pass/fail test -- a documented BOUNDARY PROBE (issue #41, increment 3).
-# `netlab create` on this topology fails FAST, by design, with:
-#   IncorrectValue in modules: Device type kea (node dut) does not support module vrf
-# This is a netlab-core/host-role boundary, not a kea gap -- see the long comment
-# in netsim/daemons/kea.yml next to `features:` for the full evidence trail (the
-# `vrf` module has no rendering path for any role:host/no-routing-engine device;
-# its templates are entirely per-NOS routing-protocol VRF config). Kept in-tree
-# so the exact failing command + error is reproducible and doesn't need
-# re-discovering. dhcp.vrf (relay-side VRF awareness) is proven instead by
-# tests/integration/dhcp/50-kea-relay.yml.
+# Direct-attach DHCPv4 with the client AND kea's own interface inside a VRF (no
+# relay in between). Proves the netlab `vrf` module now works on the kea daemon
+# device via Linux VRF-lite (netsim/daemons/kea/vrf.j2): kea creates the VRF,
+# enslaves its directly-attached interface, and serves DHCP from inside it. This
+# was a documented boundary probe until daemon/kea gained VRF-lite support -- see
+# the long comment in netsim/daemons/kea.yml.
 message: |
-  Increment-3 probe: direct-attach DHCPv4 with the client AND kea's own
-  interface inside a VRF (no relay in between -- kea itself would need to be
-  VRF-aware on this link, unlike the relayed VRF case in 50-kea-relay.yml
-  where only the RELAY needed VRF awareness and kea just saw a giaddr).
-  EXPECTED OUTCOME: `netlab create` fails with "Device type kea does not
-  support module vrf" -- a proven netlab-core/host-role boundary (see
-  netsim/daemons/kea.yml), not a kea-specific gap. Do not expect this
-  topology to boot.
+  Increment-3: direct-attach DHCPv4 with the client AND kea's own interface inside
+  VRF red (no relay). kea sets up Linux VRF-lite (ip link add red type vrf ...),
+  enslaves its data interface, re-applies the IP, and serves DHCP from within the
+  VRF. c1 should get a dynamic address directly from kea over the VRF interface.
 
 defaults.sources.extra: [ ../wait_times.yml, ../warnings.yml ]
 
@@ -54,4 +46,4 @@ validate:
     pass: c1 got a dynamic address directly from kea inside VRF red
     fail: No IPv4 address assigned
     exec: "show ip interface brief"
-    valid: "'DHCP' in stdout"
+    valid: "'DHCP' in stdout and '172.16.0.' in stdout"
