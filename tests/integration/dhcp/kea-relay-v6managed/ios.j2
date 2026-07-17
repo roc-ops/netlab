@@ -1,0 +1,11 @@
+! Cisco IOS DHCPv6 clients ('ipv6 address dhcp') wait for a Router Advertisement with the
+! Managed flag set before they start a stateful DHCPv6 exchange. r1 is the on-link router
+! for the v6 client here -- Kea sits behind the relay, several hops away, so its own RA
+! (if any) is link-local and can't reach past the relay. Set the flags on every
+! DHCPv6-relaying interface.
+{% for intf in interfaces if intf.dhcp.relay.ipv6 is defined %}
+interface {{ intf.ifname }}
+ ipv6 nd managed-config-flag
+ ipv6 nd other-config-flag
+!
+{% endfor %}

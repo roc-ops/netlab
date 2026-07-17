@@ -1,0 +1,33 @@
+# ISC Kea -- DHCPv4/DHCPv6 server with a REST control agent, as a netlab daemon device.
+#
+# Modeled on netlab's own dnsmasq daemon (netsim/daemons/dnsmasq.yml), the only other
+# built-in DHCP-server daemon. dnsmasq is libvirt-only; kea adds clab support (there is
+# no clab-provider DHCP-server node otherwise) plus DHCPv6 and VRF-aware relay handling
+# via the pools' user-context. netsim/daemons/kea/dhcp.j2 renders netlab's computed
+# dhcp.pools (v4 and v6) into /etc/kea/kea-dhcp{4,6}.conf and reloads the running
+# daemons through the control agent's REST API (no restart needed).
+description: ISC Kea DHCP server (DHCPv4 + DHCPv6, REST control agent)
+node:
+  module: [ dhcp ]
+dhcp:
+  server: true
+clab:
+  group_vars:
+    docker_shell: bash
+  image: netlab/kea:latest
+  build: True
+  features:
+    initial:
+      roles: [ host ]
+      config_mode: [ sh ]
+
+libvirt:                        # Not yet available on libvirt
+  image:
+
+features:
+  dhcp:
+    server: true
+    vrf: true
+  initial:
+    reload: false
+    roles: [ host ]
