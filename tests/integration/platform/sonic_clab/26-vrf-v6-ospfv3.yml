@@ -1,0 +1,27 @@
+# SONiC per-VRF OSPFv3 — issue #16 follow-on: dual-stack version of sonic-vrf.yml (link in VRF
+# red with per-VRF OSPF). Needs features.vrf.ospfv3 (this pass adds it to sonic.yml) --
+# vrf/frr.frr-config.j2 (upstream, vendored) already renders `router ospf6 vrf <name>` once the
+# feature flag unlocks it and the VRF has an ipv6 AF.
+#   cd netlab/sonic && netlab up sonic-vrfv6ospf.yml
+provider: clab
+plugin: [ multilab ]
+defaults:
+  device: sonic_clab
+  multilab:
+    id: 52
+
+addressing:
+  loopback:
+    ipv6: 2001:db8:0::/48
+  p2p:
+    ipv6: 2001:db8:100::/48
+    prefix6: 64
+
+module: [ vrf, ospf ]
+vrfs:
+  red:
+nodes: [ s1, s2 ]
+links:
+  - s1:
+    s2:
+    vrf: red

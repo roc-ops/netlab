@@ -33,8 +33,19 @@ support:
   - docker-sonic-vs is a monolithic single container (FRR vtysh runs directly); this differs from
     the multi-container architecture of the full SONiC VM used by the parent 'sonic' device, so
     initial/bgp templates are NOT shared with the parent device and are provided here instead.
+  - >-
+    Genuinely unsupported, not just untested (verdicts carried over from our out-of-tree
+    reference, which probed each of these live): dhcp relay/client -- docker-sonic-vs ships no
+    dhcrelay/dhcp6relay binary at all; stp -- config-plane only, no stpd daemon so there is no
+    real port-blocking behavior to verify; mlag.vtep (anycast VTEP) -- config-plane renders
+    correctly (identical vtep-ip-global, underlay OSPF Full, BGP+EVPN Established) but the
+    active-active EVPN overlay is platform-blocked (no mclagd, so BGP never resolves a usable
+    self-next-hop for the anycast VTEP -- datapath 100% loss); check.config (config validation)
+    -- inapplicable/unsafe together with the 'files' plugin due to a netlab-core plugin-ordering
+    bug that silently deletes files-plugin configlets (same bug independently reproduced against
+    ArcOS and OcNOS, not device-specific).
 lag_interface_name: "PortChannel{lag.ifindex}"
-tunnel_interface_name: "tun{ifindex}"   # tunnel.gre plugin naming; not ported/tested yet (#40 follow-up)
+tunnel_interface_name: "tun{ifindex}"   # tunnel.gre plugin naming (kernel netdev, ip_gre)
 group_vars:
   netlab_device_type: sonic_clab
   netlab_frr_daemons:            # module -> FRR daemons to enable in /etc/frr/daemons (default: no)
@@ -47,6 +58,12 @@ group_vars:
     gateway: [ vrrpd ]
     mpls: [ ldpd ]
 clab:
+  # No netsim/templates/provider/clab/sonic_clab.j2 override exists (dev-guide checklist item):
+  # the generic templates/provider/clab/clab.j2 already renders every clab.<key> below (image,
+  # mtu, node.kind, ...) via its key-value passthrough loop (defaults.providers.clab.attributes.
+  # node._keys) -- confirmed empirically, clab.yml rendered correctly with no provider template
+  # of our own. A provider override is only needed for device-specific containerlab topology
+  # shapes (bind mounts, exec hooks, etc.); this device needs none of that.
   image: docker-sonic-vs:latest
   mtu: 1500
   node:
@@ -149,4 +166,10 @@ features:
     model: l3-switch         # access switchports + SVIs
     svi_interface_name: "Vlan{vlan}"   # config_db object name -- CAPITAL V; the config CLI
                                         # rejects netlab's default lowercase vlan<id>
+  tunnel:
+    gre: true                # tunnel.gre plugin: kernel ip_gre/ip6_gre, FRR-delegated bash
+                              # template (extra/tunnel/gre/frr.j2) -- reused as-is, no override
+# Deliberately NOT declared (genuinely unsupported on this image, not just untested -- see the
+# 'support.caveats' entry above for the live-probed reason): dhcp relay/client, stp real
+# port-blocking, mlag.vtep active-active datapath, check.config (together with 'files').
 graphite.icon: switch
