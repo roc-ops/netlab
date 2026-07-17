@@ -180,9 +180,21 @@ interface {{ l.ifname }}
 {%   elif l.type|default("") == "stub" %}
  description Stub interface
 {%   endif %}
+{#   Every other interface type is addressed by the config_db bash loop above (config CLI);
+     tunnel interfaces are excluded from that loop (the config CLI only accepts
+     Ethernet/PortChannel/Vlan/Loopback names) but DO exist as real kernel netdevs by now
+     (extra/tunnel/gre/frr.j2 already ran `ip tunnel add`, with no addressing of its own --
+     that's netlab's shared tunnel.gre plugin template, same as the vanilla frr device, which
+     also relies on this vtysh 'ip address' step). Address them here instead. #}
+{%   if l.type == 'tunnel' and l.ipv4 is defined and l.ipv4 is string %}
+ ip address {{ l.ipv4 }}
+{%   endif %}
 {%   if l.type != 'loopback' and 'ipv6' in l %}
  ipv6 nd ra-interval 5
  no ipv6 nd suppress-ra
+{%   endif %}
+{%   if l.type == 'tunnel' and l.ipv6 is defined and l.ipv6 is string and l.ipv6|ansible.utils.ipv6 %}
+ ipv6 address {{ l.ipv6 }}
 {%   endif %}
 {%   if l.bandwidth is defined %}
  bandwidth {{ l.bandwidth  }}
