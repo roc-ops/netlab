@@ -33,6 +33,8 @@ support:
   - docker-sonic-vs is a monolithic single container (FRR vtysh runs directly); this differs from
     the multi-container architecture of the full SONiC VM used by the parent 'sonic' device, so
     initial/bgp templates are NOT shared with the parent device and are provided here instead.
+lag_interface_name: "PortChannel{lag.ifindex}"
+tunnel_interface_name: "tun{ifindex}"   # tunnel.gre plugin naming; not ported/tested yet (#40 follow-up)
 group_vars:
   netlab_device_type: sonic_clab
   netlab_frr_daemons:            # module -> FRR daemons to enable in /etc/frr/daemons (default: no)
@@ -55,17 +57,23 @@ clab:
     ansible_ssh_pass: YourPaSsWoRd                     # bootstrapped 'admin' login, interactive use only
     netlab_ready: [ ansible ]                          # skip the SSH readiness wait (sshd isn't up yet)
     netlab_show_command: [ vtysh, -c, 'show $@' ]
+# All feature flags below mirror our out-of-tree reference (roccontlab netlab/sonic/sonic.yml),
+# which reached them through live testing across 19 module templates -- ported wholesale rather
+# than re-derived, since the underlying image/FRR version/config_db behavior is identical. Each
+# is re-verified live against this in-tree device as it's ported; see the per-increment commits
+# and tests/integration/platform/sonic_clab/ for what's actually been re-run here.
 features:
   initial:
-    collect: false        # config fetch not ported yet in this increment (tracked for a follow-up)
+    collect: true          # ansible_connection: docker unblocks this (no sshd needed) -- verified live
   bgp:
-    import: [ connected, static, ospf ]
-    advertise: true
-    password: true
+    import: [ connected, static, ospf ]   # redistribute-into-BGP (frr.j2 renders it)
+    advertise: true                       # bgp.originate: static discard route backs the prefix
+    password: true                        # bgp.session plugin (MD5)
     timers: true
     gtsm: true
     passive: true
-    multihop:
+    bfd: true
+    multihop:                             # ebgp.multihop plugin (FRR-delegated)
       vrf: true
   ospf:
     unnumbered: true
@@ -74,4 +82,71 @@ features:
     timers: true
     priority: true
     password: true
+    bfd: true
+  isis:
+    circuit_type: true
+    unnumbered: { ipv4: true, ipv6: true, network: true }
+    import: [ static ]
+  mpls:
+    ldp: true            # LDP control-plane; no kernel MPLS label FIB in a clab container
+    vpn: true             # unlocks BGP VPNv4/VPNv6 L3VPN import
+  sr:
+    af: [ ipv4, ipv6 ]    # SR-MPLS via IS-IS; SIDs flooded/visible in the IS-IS LSDB
+    protocol: [ isis ]
+  srv6:
+    isis: true            # kernel seg6 (net.ipv6.seg6_enabled), not the MPLS label FIB
+  vrf:
+    keep_module: true
+    ospfv2: true
+    ospfv3: true
+    bgp: true
+    isis: true
+  bfd: true
+  lag:
+    passive: true
+    mlag:
+      peer:
+        ip: 169.254.127.0/31   # static /31 peer-link (EOS pattern); SONiC has no MLAG keepalive
+                                # protocol to negotiate one over -- config-plane only (no mclagd)
+  ripv2:
+    ipv4: true
+  gateway:
+    protocol: [ vrrp ]
+    vrrp:
+      version: true       # vrrp.version plugin (FRR vrrpd v2/v3)
+  routing:
+    static:
+      vrf: true
+      discard: true        # Null0 blackhole (backs bgp.originate)
+    prefix: true
+    aspath: true
+    community:
+      standard: true
+      large: true
+    policy:
+      match:
+        prefix: true
+        aspath: true
+        community:
+          standard: true
+      set:
+        locpref: true
+        med: true
+        prepend: true
+        weight: true
+        community:
+          standard: true
+  vxlan: true              # L2VNI via FRR/kernel path (orchagent can't program the VS dataplane)
+  evpn:
+    transport: [ vxlan, mpls ]
+    irb: true               # symmetric IRB / L3VNI -- kernel VRF + vxlan L3VNI transit device
+    multihoming:             # evpn.multihoming plugin: ESI-LAG on PortChannel (teamd) via zebra
+      lag: true
+      interface: false
+      esi_auto: true
+      modes: [ 'all-active' ]
+  vlan:
+    model: l3-switch         # access switchports + SVIs
+    svi_interface_name: "Vlan{vlan}"   # config_db object name -- CAPITAL V; the config CLI
+                                        # rejects netlab's default lowercase vlan<id>
 graphite.icon: switch

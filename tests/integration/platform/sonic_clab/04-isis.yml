@@ -1,0 +1,12 @@
+# 2-node SONiC IS-IS spike (issue #6). cd netlab/sonic && netlab up sonic-isis.yml
+provider: clab
+plugin: [ multilab ]
+defaults:
+  device: sonic_clab
+  multilab:
+    id: 52
+module: [ isis ]
+nodes: [ s1, s2 ]
+links:
+  - s1:
+    s2:
