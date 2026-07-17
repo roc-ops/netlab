@@ -1,8 +1,8 @@
 ---
 message: |
-  Test the GRE tunnels. The tested devices has a GRE tunnel over IPv4 and runs
-  OSPFv2 and OSPFv3 over it. The probe should receive an OSPF route advertised
-  from the DUT and be able to ping its loopback.
+  Test the GRE tunnels. The tested devices has GRE tunnels over IPv4 and IPv6
+  and runs OSPFv2 and OSPFv3 over them. The probes should receive OSPF routes
+  advertised from the DUT and be able to ping its loopback.
 
 defaults.sources.extra: [ ../wait_times.yml, ../warnings.yml ]
 
@@ -58,12 +58,14 @@ links:
   pool: core6
   members: [ dut-core, r3-core ]
 - group: gre
+  type: tunnel
   tunnel.mode: gre
   tunnel.source.link.role: core
   mtu: 1400
   pool: tunnel
   members: [ dut-r2 ]
 - group: gre6
+  type: tunnel
   tunnel.mode: gre
   tunnel.source.link.role: core6
   tunnel.af: ipv6
@@ -107,7 +109,7 @@ validate:
     wait: ping
     wait_msg: Waiting for things to sort out, I guess
     nodes: [ r2 ]
-    plugin: ping(nodes.dut.loopback.ipv6,src=node.loopback.ipv6,af=ipv6)
+    plugin: ping(nodes.dut.loopback.ipv6,src=node.loopback.ipv6,af='ipv6')
 
   g6_adj_v4:
     description: Check OSPF adjacencies (GRE IPv6)
@@ -144,4 +146,4 @@ validate:
     wait: ping
     wait_msg: Waiting for things to sort out, I guess
     nodes: [ r3 ]
-    plugin: ping(nodes.dut.loopback.ipv6,src=node.loopback.ipv6,af=ipv6)
+    plugin: ping(nodes.dut.loopback.ipv6,src=node.loopback.ipv6,af='ipv6')
