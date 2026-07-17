@@ -6,54 +6,70 @@
 # The out-of-tree device supplied the verified per-module config logic and the platform notes
 # (see wiki/okf/arcos-8.5/); this file wires the same platform into netlab conventions.
 #
-# CONNECTION MODEL (the crux of issue #39): ArcOS ships an official, actively maintained Ansible
-# collection -- `arrcus.arcos` (Ansible Galaxy, namespace arrcus, latest 2.0.18, requires
-# ansible>=2.15) -- with a cliconf + terminal plugin pair and arcos_command/arcos_config
-# modules. Its own README states plainly: "The ArcOS collection supports network_cli
-# connections." That settles the question in favor of the project-recommended model:
-#   ansible_connection: network_cli, ansible_network_os: arrcus.arcos.arcos (FQCN -- ArcOS
-#   was never bundled into ansible-base, so there is no short-name redirect the way there is
-#   for ios/nxos/eos; compare arubacx.yml, which is in the same boat).
-# gNMI is NOT required for configuration; the out-of-tree device uses gNMI only for read-side
-# validation assertions, and this device doesn't need that to configure the box.
+# CONNECTION MODEL (the crux of issue #39):
+#
+# PREFERRED, currently BLOCKED: ArcOS ships an official, actively maintained Ansible collection,
+# `arrcus.arcos` (Galaxy, namespace arrcus, checked versions 2.0.13-2.0.18 -- the full set
+# currently published -- requires ansible>=2.15), with a cliconf + terminal plugin pair and
+# arcos_command/arcos_config modules over `ansible.netcommon.network_cli`. Its own README states
+# plainly: "The ArcOS collection supports network_cli connections." That's the right,
+# project-recommended model, and everything up to the final commit call is live-verified
+# working (network_cli connects/authenticates, ansible.netcommon.net_put stages files, and
+# manually replaying the device's own `config`/`load merge <path>`/`commit`/`end` sequence over
+# a raw SSH session succeeds instantly) -- but every published arrcus.arcos version (2.0.13
+# through 2.0.18 checked) hardcodes an `arcos_cli` mode-switch command and a `config terminal`
+# invocation in its cliconf/terminal plugins that this ArcOS build's confd_cli rejects with a
+# syntax error, hanging every arcos_command/arcos_config call at Ansible's 60s command timeout.
+# Two real, reproducible collection bugs, confirmed by locally patching the installed collection
+# then fully reverting it (see netsim/ansible/tasks/deploy-config/arcos.yml for the complete
+# account) -- worth reporting upstream to Arrcus. Flip ansible_connection back to
+# ansible.netcommon.network_cli (see the commented-out block below) once a collection version
+# without this bug ships, or if Arrcus confirms a different invocation avoids it.
+#
+# OPERATIVE FALLBACK (this device, today): ansible_connection: docker -- Ansible's built-in
+# `docker` connection plugin, the same netlab-idiomatic pattern already used in-tree by
+# netsim/devices/sonic_clab.yml (and frr/cumulus_nvue) for containers with no usable
+# cliconf-compatible SSH CLI. `command`/`shell`/`template` tasks run directly inside the
+# container (no manual `docker exec` wrapping, no delegate_to: localhost) -- this replaces the
+# raw shell-scripted `docker exec ... confd_cli` deploy task our out-of-tree reference
+# (roccontlab netlab/arcos/) uses, with the same underlying confd_cli load-merge-commit
+# sequence, just reached the ansible-native way. gNMI is not used anywhere in this device.
 #
 # No clab.interface.name override: the arrcus_arcos containerlab kind requires the
 # container-side (Linux veth) interface names to literally match swpX -- same as the device's
 # own interface_name template below, so no translation is needed (unlike, say, Arista cEOS's
 # Ethernet<->ethX split).
 #
-# CONTAINER-IMAGE CAVEAT (not a network_cli limitation): the arcos:8.2.1A.P2 container image's
-# baked-in startup config fails to load (it tries to delete non-deletable built-in martian
-# prefix-sets), so the node boots with SSH/NETCONF/gNMI all *disabled* -- see
-# wiki/okf/arcos-8.5/netlab-bootstrap.md. A real/production ArcOS deployment may not have this
-# problem; this device works around the image's specific defect using netlab's native
-# `netlab_start_exec` group_var (-> node.clab.exec == containerlab's own post-start `exec:`,
-# no custom deploy code, no SSH needed to run it -- same idiom netsim/devices/dellos10.yml uses
-# for its own post-boot delay) to flip on ssh-server + create an AAA user, *before* Ansible ever
-# attempts a network_cli connection.
+# CONTAINER-IMAGE CAVEAT: the arcos:8.2.1A.P2 container image's baked-in startup config fails to
+# load (it tries to delete non-deletable built-in martian prefix-sets), so the node boots with
+# SSH/NETCONF/gNMI all *disabled* -- see wiki/okf/arcos-8.5/netlab-bootstrap.md. A real/
+# production ArcOS deployment may not have this problem; this device works around the image's
+# specific defect using netlab's native `netlab_start_exec` group_var (-> node.clab.exec ==
+# containerlab's own post-start `exec:`, no custom deploy code, no SSH needed to run it -- same
+# idiom netsim/devices/dellos10.yml uses for its own post-boot delay) to flip on ssh-server
+# (kept for `netlab connect` / interactive troubleshooting -- NOT used for config deploy, which
+# goes over ansible_connection: docker) + create an AAA user. Also live-verified required
+# (independent of SSH): ArcOS refuses to *enable interfaces at all* -- confd aborts the commit
+# -- until the factory-default admin-user password is changed
+# (`system aaa authentication admin-user admin-password ...`).
 #
-# LIVE-TESTED STATUS (real arcos:8.2.1A.P2 node, multilab id 51, this increment):
+# LIVE-TESTED STATUS (real arcos:8.2.1A.P2 node, multilab id 51, 2-node OSPF+BGP topology):
 #   - `netlab create`: device recognized, all templates render correctly (initial/ospf/bgp).
-#   - clab.exec bootstrap: WORKS -- SSH reachable, arcadmin login verified, factory-default
-#     admin-user password changed (a second, separate requirement without which confd refuses
-#     to enable ANY interface -- also live-discovered here).
-#   - Ansible network_cli connection (wait_for_connection) and file staging via
-#     ansible.netcommon.net_put: WORK.
-#   - Manually replaying the device's own `config`/`load merge <path>`/`commit`/`end` sequence
-#     over a raw SSH session (i.e. everything network_cli *should* automate) succeeds
-#     instantly -- so the rendered config, the CLI grammar, and the connection are all sound.
-#   - Actually driving that sequence through arrcus.arcos.arcos_command/arcos_config via
-#     Ansible's network_cli persistent connection currently hangs (60s command timeout) on
-#     this ArcOS build. Root-caused two real bugs in the published arrcus.arcos 2.0.18
-#     collection along the way (a missing `@` in the terminal plugin's prompt regex, and a
-#     hardcoded `arcos_cli` mode-switch command that doesn't exist on this ArcOS version) but
-#     neither fix alone closed the gap within this increment -- see
-#     netsim/ansible/tasks/deploy-config/arcos.yml for the full account and next steps.
-#   - features.initial.collect is deliberately NOT set yet -- fetch-config uses the same
-#     arcos_command path currently blocked by the same open issue.
-# Net effect: the connection MODEL (network_cli + arrcus.arcos) is the right, verified choice
-# and everything up to the final commit call works; the actual `netlab initial` config push is
-# not yet reliable end-to-end pending further collection-level debugging or an upstream fix.
+#   - clab.exec bootstrap: WORKS -- SSH reachable, arcadmin login verified, admin-user password
+#     changed.
+#   - `netlab initial` (ansible_connection: docker): WORKS END TO END on both nodes --
+#     initial/ospf/bgp all commit cleanly ("Commit complete."); re-running is idempotent ("No
+#     modifications to commit."). Confirmed via `show running-config` that the rendered
+#     hostname/interfaces/OSPF/BGP stanzas match exactly what was pushed.
+#   - Protocol convergence, confirmed via confd state paths (not just config-plane): OSPF
+#     adjacency reaches `NEIGHBOR_FULL` within seconds; BGP session reaches `session-state
+#     ESTABLISHED` with prefixes exchanged (1 sent/received each way) -- allow ~60-90s
+#     (connect-retry timer), matching wiki/okf/arcos-8.5/netlab-bootstrap.md's own note.
+#   - One caveat found along the way: confd occasionally rejects a commit with "the
+#     configuration database is locked by session none" for a few seconds right after another
+#     confd_cli session on the same node (e.g. right after the mgmt bootstrap) -- transient,
+#     same class of issue as the confd lock OcNOS hits (netlab/ocnos/unlock.py in the
+#     out-of-tree reference); tasks/deploy-config/arcos.yml retries on this specific message.
 description: Arrcus ArcOS
 interface_name: swp{ifindex}
 ifindex_offset: 1
@@ -62,15 +78,32 @@ loopback_interface_name: "loopback{ifindex}"
 lag_interface_name: "bond{lag.ifindex}"
 tunnel_interface_name: tunnel{ifindex}
 role: router
+support:
+  level: minimal   # only initial/ospf/bgp ported so far -- deploy path itself is fully working
+  caveats:
+  - >-
+    Config deployment uses Ansible's 'docker' connection plugin (docker exec running
+    confd_cli), not network_cli -- live-verified working end to end (initial/ospf/bgp commit
+    cleanly, idempotent, OSPF reaches NEIGHBOR_FULL, BGP reaches ESTABLISHED). network_cli via
+    the official arrcus.arcos collection is the preferred model per the platform's own docs,
+    but every published version (2.0.13 through 2.0.18) hangs on this ArcOS build; two real
+    bugs root-caused, see tasks/deploy-config/arcos.yml. Flip back to network_cli once fixed
+    upstream.
+  - >-
+    arcos:8.2.1A.P2's baked-in startup config fails to load (built-in martian prefix-sets are
+    non-deletable), so SSH/NETCONF/gNMI all boot disabled; netlab_start_exec bootstraps
+    ssh-server + an AAA user + the mandatory admin-user password change before any config can
+    be committed. See wiki/okf/arcos-8.5/netlab-bootstrap.md.
 group_vars:
-  ansible_network_os: arrcus.arcos.arcos
-  ansible_connection: network_cli
-  ansible_user: arcadmin
-  ansible_ssh_pass: Arcos@1234
   netlab_device_type: arcos
+  # Set unconditionally (harmless with ansible_connection: docker below -- it's only a
+  # descriptive/path-lookup variable, network_cli transport is controlled by
+  # ansible_connection alone) -- several netlab core playbooks (e.g. wait-for-ready.yml's
+  # readiness-script lookup) reference ansible_network_os unconditionally and fail outright if
+  # it's undefined, regardless of which connection plugin is actually in use.
+  ansible_network_os: arrcus.arcos.arcos
   netlab_check_retries: 60
   netlab_check_delay: 10
-  netlab_ready: [ ssh ]
   # One-time management bootstrap (netlab-native: 'netlab_start_exec' is copied by
   # netsim/providers/clab/utils.py::add_clab_exec into node.clab.exec == containerlab's own
   # post-start `exec:` list -- no SSH, no custom deploy mechanism, same idiom dellos10.yml uses
@@ -98,12 +131,20 @@ group_vars:
     echo system aaa authentication user arcadmin password Arcos@1234 role SYSTEM_ROLE_ADMIN;
     echo commit; echo end; } | confd_cli -C -u admin 2>&1 |
     grep -qE -e Commit.complete -e No.modifications && exit 0; sleep 5; done; exit 1"
+  # PREFERRED (currently blocked -- see support.caveats above); flip to this once a working
+  # arrcus.arcos version ships (ansible_network_os is already set above):
+  # ansible_connection: ansible.netcommon.network_cli
+  # netlab_console_connection: ssh   # netlab connect rejects the FQCN ansible_connection
+  # ansible_user: arcadmin
+  # ansible_ssh_pass: Arcos@1234
+  # netlab_ready: [ ssh ]
 features:
   initial:
     ipv4:
       unnumbered: false
     ipv6:
       lla: true
+    collect: true
   ospf:
     priority: true
     timers: true
@@ -122,6 +163,11 @@ clab:
   mtu: 1500
   node:
     kind: arrcus_arcos
+  group_vars:
+    ansible_connection: docker
+    ansible_user: root
+    ansible_ssh_pass: Arcos@1234           # bootstrapped 'arcadmin' login, interactive use only
+    netlab_ready: [ ansible ]              # skip the SSH readiness wait -- deploy doesn't need it
 external:
   image: none
 graphite.icon: router
