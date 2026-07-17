@@ -1,12 +1,16 @@
 ---
-# fetch ArcOS configuration using arrcus.arcos.arcos_command (network_cli)
-#
-# NOTE: subject to the same open network_cli/collection prompt-detection issue documented in
-# tasks/deploy-config/arcos.yml (point 5) -- arcos_command may hang against this ArcOS build
-# until that's resolved. Kept here because it's the correct call once it is.
-- arrcus.arcos.arcos_command:
-    commands: [ "show running-config" ]
+# fetch ArcOS running-config over ansible_connection: docker (see tasks/deploy-config/arcos.yml
+# for the full connection-model account -- network_cli/arrcus.arcos is preferred but blocked by
+# collection bugs on this ArcOS build, so this shells out via docker exec instead, same as
+# deploy).
+- name: "confd_cli: show running-config"
+  # confd_cli has no "-c <command>" one-shot flag (-c is --cwd, not "run this command") --
+  # live-verified: feed it non-interactively over stdin instead, same as deploy-config/arcos.yml.
+  shell: printf 'show running-config\n' | confd_cli -C -u admin
+  args:
+    executable: /bin/bash
   register: arcos_run_config
+  changed_when: false
 
 - set_fact:
-    ansible_net_config: "{{ arcos_run_config.stdout[0] }}"
+    ansible_net_config: "{{ arcos_run_config.stdout }}"
