@@ -1,7 +1,12 @@
 ---
-- name: save config
-  shell: echo 'show run' | confd_cli
+# fetch ArcOS configuration using arrcus.arcos.arcos_command (network_cli)
+#
+# NOTE: subject to the same open network_cli/collection prompt-detection issue documented in
+# tasks/deploy-config/arcos.yml (point 5) -- arcos_command may hang against this ArcOS build
+# until that's resolved. Kept here because it's the correct call once it is.
+- arrcus.arcos.arcos_command:
+    commands: [ "show running-config" ]
   register: arcos_run_config
 
 - set_fact:
-    ansible_net_config: "{{ arcos_run_config.stdout }}"
+    ansible_net_config: "{{ arcos_run_config.stdout[0] }}"
