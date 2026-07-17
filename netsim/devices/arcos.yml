@@ -90,16 +90,21 @@
 #     any 2-node link even when a topology explicitly requested "broadcast", since a 2-node
 #     link is always netlab type p2p -- fixed to only fall back when network_type isn't
 #     explicitly set (same fix applied to templates/vrf/arcos.j2's OSPF/ISIS sections by
-#     inspection, not independently re-tested). Even with both fixed, the FRR<->ArcOS
-#     adjacency itself still does NOT converge on this test -- it stalls in
-#     NEIGHBOR_EXSTART, root-caused to the arrcus_arcos containerlab kind's default veth MTU
-#     (8974) not matching the frr kind's (1500); OSPF's DBD MTU check stalls the session.
-#     Setting ArcOS's own `interface <if> mtu` config leaf to 1500 does NOT fix it (tested
-#     live) -- see templates/ospf/arcos.j2 for the full diagnostic account. This is a genuine,
-#     STILL-OPEN gap: arcos-arcos and arcos-in-VRF OSPF/ISIS/BGP all converge correctly (see
-#     above), but cross-vendor OSPF against FRR probe nodes (the standard netlab generic test
-#     harness pattern) does not, pending a fix at the containerlab-kind level or discovery of
-#     an ArcOS OSPF MTU-check bypass.
+#     inspection, not independently re-tested). A third, real gap was also found and FIXED
+#     (issue #39 follow-up): the FRR<->ArcOS adjacency stalled in NEIGHBOR_EXSTART because
+#     the arrcus_arcos containerlab kind's default veth MTU (8974) didn't match the frr
+#     kind's (1500). Two-layer fix, both required: (a) netsim/templates/provider/clab/clab.j2
+#     now renders netlab's own already-resolved per-interface MTU (nl.mtu) as containerlab's
+#     native link-level `mtu:` property, so the veth is created at the correct MTU on both
+#     ends from the start -- a general netlab-CORE fix, not ArcOS-specific (the key was
+#     previously silently dropped for every clab device); (b) ArcOS's OWN `interface mtu`
+#     confd leaf turned out to be necessary too -- ArcOS reprograms the real kernel netdev
+#     MTU (and what it advertises in OSPF's DBD) to (configured-leaf - 26) on every commit,
+#     so netsim/ansible/templates/initial/arcos.j2 now sets the leaf to `l.mtu + 26` to land
+#     exactly on netlab's intended MTU; setting the bare intended value (tried previously)
+#     silently undershoots by 26 and looked like a no-op. Both fixes are live-verified: the
+#     unmodified generic test now passes 4/4 (OSPF reaches Full on both the broadcast and
+#     point-to-point links, SPF routes propagate end to end).
 #   - One caveat found along the way: confd occasionally rejects a commit with "the
 #     configuration database is locked by session none" for a few seconds right after another
 #     confd_cli session on the same node (e.g. right after the mgmt bootstrap) -- transient,
@@ -139,15 +144,19 @@ support:
     forwarding (native container has no kernel MPLS platform-labels -- control plane only).
     bgp.session and other dotted plugins are not yet ported.
   - >-
-    STILL OPEN: OSPF/ISIS/BGP all converge correctly between ArcOS nodes (including inside a
-    VRF), but a generic cross-vendor OSPF test against FRR probe nodes
-    (tests/integration/ospf/ospfv2/01-network.yml) stalls in NEIGHBOR_EXSTART -- root-caused to
-    the arrcus_arcos containerlab kind's default veth MTU (8974) not matching the frr kind's
-    (1500); ArcOS's own `interface mtu` config leaf does not override whatever MTU value OSPF's
-    DBD exchange actually checks. See templates/ospf/arcos.j2 for the full diagnostic account
-    and follow-up options. The same generic test also caught and fixed two real template bugs
-    (an underscore/hyphen typo and an overly-broad point-to-point fallback) independent of the
-    MTU issue.
+    RESOLVED (was STILL OPEN): the ArcOS<->FRR cross-vendor MTU mismatch that stalled
+    generic-test OSPF in NEIGHBOR_EXSTART is fixed -- see netsim/templates/provider/clab/clab.j2
+    (renders netlab's resolved interface MTU as containerlab's link-level `mtu:`) and
+    netsim/ansible/templates/initial/arcos.j2 (`interface <if> mtu {{ l.mtu + 26 }}` -- ArcOS
+    reprograms the real kernel/OSPF-advertised MTU to configured-leaf-minus-26 on every commit,
+    confirmed by live probing three data points). tests/integration/ospf/ospfv2/01-network.yml
+    now passes 4/4 unmodified. BGP (tests/integration/bgp/01-ebgp-session.yml) also reaches
+    Established with the same fix -- but needs ArcOS's documented ~60-90s connect-retry window
+    (see the ospf/bgp convergence caveat above), which is longer than that generic test's
+    default 30s wait, so a bare `netlab validate` run right after `netlab initial` can catch it
+    still in OpenConfirm/Idle; re-running validate (or widening the wait) after ~75s shows both
+    sessions Established with the beacon prefix propagated -- confirmed on two independent
+    fresh boots, not a fluke.
 group_vars:
   netlab_device_type: arcos
   # Set unconditionally (harmless with ansible_connection: docker below -- it's only a

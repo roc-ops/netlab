@@ -5,22 +5,30 @@
   written as a plain integer ("area 0") in OSPFv3, not dotted-decimal ("area 0.0.0.0") like
   OSPFv2 -- confirmed in the ArcOS 8.5 CLI docs.
 
-  KNOWN OPEN ISSUE (found via tests/integration/ospf/ospfv2/01-network.yml, a generic
-  cross-vendor test against FRR probe nodes -- arcos-arcos adjacencies are unaffected): the
-  arrcus_arcos containerlab kind brings interfaces up with a much larger default veth MTU
-  (8974) than the frr kind's (1500). OSPF's DBD exchange checks MTU compatibility, so an
-  ArcOS<->FRR adjacency stalls indefinitely in NEIGHBOR_EXSTART. Explicitly setting ArcOS's own
-  `interface <if> mtu <n>` config leaf to 1500 to match does NOT resolve it (tested live) --
-  the OSPF process appears to check the underlying kernel veth MTU directly, not the
-  configured-intent leaf. No `mtu-ignore`-equivalent OSPF leaf was found under `interface
-  <if> subinterface 0` (the ArcOS 8.5 OpenConfig-CLI subinterface schema has no mtu child at
-  all; `interface <if> mtu` is a top-level, not OSPF-specific, config leaf). Root cause is at
-  the containerlab-kind level (arrcus_arcos's own default veth MTU), not something this
-  template or netlab's clab.mtu device setting can reach -- clab.mtu is never actually
-  propagated into the rendered containerlab topology by netsim/templates/provider/clab/clab.j2
-  for ANY device (grepped: no `mtu` handling exists there at all), so it was never a viable
-  lever here regardless. Follow-up: investigate whether the arrcus_arcos kind definition
-  itself accepts an MTU override, or find the real ArcOS OSPF MTU-check bypass.
+  RESOLVED (was a known open issue, found via tests/integration/ospf/ospfv2/01-network.yml, a
+  generic cross-vendor test against FRR probe nodes -- arcos-arcos adjacencies were never
+  affected): the arrcus_arcos containerlab kind brought interfaces up at a much larger MTU
+  (8974) than the frr kind's (1500), and OSPF's DBD exchange checks MTU compatibility, so an
+  ArcOS<->FRR adjacency stalled indefinitely in NEIGHBOR_EXSTART. Two real, independent causes,
+  both now fixed:
+
+  1. netsim/templates/provider/clab/clab.j2 never rendered netlab's own resolved per-interface
+     MTU (nl.mtu) into the containerlab link definition, for ANY device -- so containerlab fell
+     back to each kind's own hardcoded veth-creation default (arrcus_arcos: 8974). Fixed there
+     (a general netlab-CORE fix, not ArcOS-specific): the link now carries containerlab's native
+     `mtu:` property whenever netlab has a resolved value.
+
+  2. Even with the veth created at the right MTU, ArcOS's own `interface <if> mtu <n>` config
+     leaf reprograms the real kernel netdev MTU -- and the MTU value OSPF's DBD advertises --
+     to (configured-leaf - 26) on every commit (live-confirmed: leaf 1500 -> kernel/advertised
+     1474; leaf 2000 -> 1974; leaf 1526 -> exactly 1500; matches the platform's own unset-leaf
+     default of 9000 -> the originally observed 8974). A previous attempt to set the leaf to
+     the bare intended value (1500) "committed clean" but silently undershot by 26 and looked
+     like a no-op -- it wasn't a no-op, it just needed the +26 compensation. Fixed in
+     netsim/ansible/templates/initial/arcos.j2: `interface <if> mtu {{ l.mtu + 26 }}`.
+
+  Both fixes are required together; live-verified with the unmodified generic test (4/4 pass,
+  OSPF reaches Full on both the broadcast and point-to-point links).
 #}
 {% macro area_interfaces(af) %}
 {% for l in interfaces|default([]) if l.ospf is defined and l[af] is defined %}
