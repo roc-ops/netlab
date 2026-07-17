@@ -82,6 +82,24 @@
 #     individually live-verified there against the same ArcOS build) and confirmed to render
 #     without error here, but not independently re-deployed+re-verified against a running node
 #     in this repo. Recommended follow-up before claiming full parity.
+#   - Generic cross-vendor module test (tests/integration/ospf/ospfv2/01-network.yml, ArcOS DUT
+#     against FRR probe nodes -- not an arcos-arcos topology): caught two real template bugs,
+#     both fixed here -- (1) ospf.j2 compared against "point_to_point" (underscore) where
+#     netlab's canonical value is "point-to-point" (hyphen), so an explicit network_type never
+#     took effect; (2) the `l.type == 'p2p'` fallback unconditionally forced point-to-point on
+#     any 2-node link even when a topology explicitly requested "broadcast", since a 2-node
+#     link is always netlab type p2p -- fixed to only fall back when network_type isn't
+#     explicitly set (same fix applied to templates/vrf/arcos.j2's OSPF/ISIS sections by
+#     inspection, not independently re-tested). Even with both fixed, the FRR<->ArcOS
+#     adjacency itself still does NOT converge on this test -- it stalls in
+#     NEIGHBOR_EXSTART, root-caused to the arrcus_arcos containerlab kind's default veth MTU
+#     (8974) not matching the frr kind's (1500); OSPF's DBD MTU check stalls the session.
+#     Setting ArcOS's own `interface <if> mtu` config leaf to 1500 does NOT fix it (tested
+#     live) -- see templates/ospf/arcos.j2 for the full diagnostic account. This is a genuine,
+#     STILL-OPEN gap: arcos-arcos and arcos-in-VRF OSPF/ISIS/BGP all converge correctly (see
+#     above), but cross-vendor OSPF against FRR probe nodes (the standard netlab generic test
+#     harness pattern) does not, pending a fix at the containerlab-kind level or discovery of
+#     an ArcOS OSPF MTU-check bypass.
 #   - One caveat found along the way: confd occasionally rejects a commit with "the
 #     configuration database is locked by session none" for a few seconds right after another
 #     confd_cli session on the same node (e.g. right after the mgmt bootstrap) -- transient,
@@ -120,6 +138,16 @@ support:
     static (no addressable src-instance for connected on this image); SR-MPLS/LDP label
     forwarding (native container has no kernel MPLS platform-labels -- control plane only).
     bgp.session and other dotted plugins are not yet ported.
+  - >-
+    STILL OPEN: OSPF/ISIS/BGP all converge correctly between ArcOS nodes (including inside a
+    VRF), but a generic cross-vendor OSPF test against FRR probe nodes
+    (tests/integration/ospf/ospfv2/01-network.yml) stalls in NEIGHBOR_EXSTART -- root-caused to
+    the arrcus_arcos containerlab kind's default veth MTU (8974) not matching the frr kind's
+    (1500); ArcOS's own `interface mtu` config leaf does not override whatever MTU value OSPF's
+    DBD exchange actually checks. See templates/ospf/arcos.j2 for the full diagnostic account
+    and follow-up options. The same generic test also caught and fixed two real template bugs
+    (an underscore/hyphen typo and an overly-broad point-to-point fallback) independent of the
+    MTU issue.
 group_vars:
   netlab_device_type: arcos
   # Set unconditionally (harmless with ansible_connection: docker below -- it's only a

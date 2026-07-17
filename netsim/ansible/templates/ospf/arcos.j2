@@ -4,11 +4,46 @@
   for both AFs modulo two differences: the protocol keyword (OSPF vs OSPF3), and the area ID is
   written as a plain integer ("area 0") in OSPFv3, not dotted-decimal ("area 0.0.0.0") like
   OSPFv2 -- confirmed in the ArcOS 8.5 CLI docs.
+
+  KNOWN OPEN ISSUE (found via tests/integration/ospf/ospfv2/01-network.yml, a generic
+  cross-vendor test against FRR probe nodes -- arcos-arcos adjacencies are unaffected): the
+  arrcus_arcos containerlab kind brings interfaces up with a much larger default veth MTU
+  (8974) than the frr kind's (1500). OSPF's DBD exchange checks MTU compatibility, so an
+  ArcOS<->FRR adjacency stalls indefinitely in NEIGHBOR_EXSTART. Explicitly setting ArcOS's own
+  `interface <if> mtu <n>` config leaf to 1500 to match does NOT resolve it (tested live) --
+  the OSPF process appears to check the underlying kernel veth MTU directly, not the
+  configured-intent leaf. No `mtu-ignore`-equivalent OSPF leaf was found under `interface
+  <if> subinterface 0` (the ArcOS 8.5 OpenConfig-CLI subinterface schema has no mtu child at
+  all; `interface <if> mtu` is a top-level, not OSPF-specific, config leaf). Root cause is at
+  the containerlab-kind level (arrcus_arcos's own default veth MTU), not something this
+  template or netlab's clab.mtu device setting can reach -- clab.mtu is never actually
+  propagated into the rendered containerlab topology by netsim/templates/provider/clab/clab.j2
+  for ANY device (grepped: no `mtu` handling exists there at all), so it was never a viable
+  lever here regardless. Follow-up: investigate whether the arrcus_arcos kind definition
+  itself accepts an MTU override, or find the real ArcOS OSPF MTU-check bypass.
 #}
 {% macro area_interfaces(af) %}
 {% for l in interfaces|default([]) if l.ospf is defined and l[af] is defined %}
   interface {{ l.ifname }}
-{% if l.ospf.network_type|default("") == "point_to_point" or l.type|default("") == "p2p" %}
+{# BUG FIX (issue #39, found via a generic cross-vendor OSPF test against an FRR probe --
+   tests/integration/ospf/ospfv2/01-network.yml, which explicitly sets ospf.network_type:
+   broadcast on one link and point-to-point on another between the SAME two devices):
+   1) netlab's canonical ospf.network_type value is "point-to-point" (hyphen) -- see
+      netsim/modules/ospf.py's network_type() allowed-value list. This template (and the
+      out-of-tree reference it was ported from) checked for "point_to_point" (underscore),
+      which never matched.
+   2) The `l.type == 'p2p'` fallback (inherited from the out-of-tree reference) unconditionally
+      forced POINT_TO_POINT_NETWORK on any 2-node link regardless of an explicit
+      ospf.network_type -- so even after fixing (1), a link explicitly marked
+      `ospf.network_type: broadcast` still rendered as point-to-point (a 2-node link is always
+      netlab type p2p), stalling the FRR<->ArcOS adjacency in ExStart when the two sides then
+      disagreed on network type. Fix: only fall back to l.type == 'p2p' when
+      ospf.network_type was NOT explicitly set; an explicit "broadcast" now renders nothing
+      (ArcOS's own default network-type), matching netlab's semantics for every other device.
+   The out-of-tree reference's own test topologies never explicitly set ospf.network_type at
+   all, so neither bug was ever exercised there. #}
+{% set nt = l.ospf.network_type|default('point-to-point' if l.type|default('') == 'p2p' else '') %}
+{% if nt == 'point-to-point' %}
    network-type POINT_TO_POINT_NETWORK
 {% endif %}
 {% if l.ospf.cost is defined %}
