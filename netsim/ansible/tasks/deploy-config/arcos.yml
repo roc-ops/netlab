@@ -11,6 +11,15 @@
 # reaches NEIGHBOR_FULL, BGP session reaches ESTABLISHED with prefixes exchanged both ways.
 # Confirmed via `show running-config` and confd operational-state paths, not just task rc=0.
 #
+# CHUNKED COMMITS: several ported module templates (vlan, vxlan, isis import, evpn) emit a
+# `#COMMIT` marker line -- confd rejects some constructs (a newly-created named list entry
+# referenced later in the SAME transaction, e.g. `vlan 10 name red` then a trunk-vlans
+# reference to it) unless each piece lands in its OWN commit first. This mirrors exactly what
+# the out-of-tree reference's docker-exec deploy task does (same awk split); ported here so any
+# module template can opt into it by emitting `#COMMIT` on its own line wherever a hard split is
+# required. Modules that never emit `#COMMIT` render as a single chunk == single commit, same as
+# before.
+#
 # CONNECTION-MODEL FINDINGS (full account -- see netsim/devices/arcos.yml's header comment for
 # the summary):
 #
@@ -69,30 +78,36 @@
     src: "{{ config_template }}"
     dest: "/tmp/netlab-{{ netsim_action }}.cfg"
 
-- name: "confd_cli: load merge + commit {{ netsim_action }} config"
-  # Retries on "configuration database is locked by session none" -- a transient confd lock
-  # (live-observed shortly after the mgmt bootstrap's own confd_cli session on the same node;
-  # it clears within a few seconds on its own, same class of issue as the confd config-store
-  # lock OcNOS hits, see netlab/ocnos/unlock.py in the out-of-tree reference). Any other
-  # rejection (Error:/Aborted: for a real reason/syntax error) fails immediately -- do not
+- name: "confd_cli: load merge + commit {{ netsim_action }} config (one commit per #COMMIT chunk)"
+  # Retries each chunk on "configuration database is locked by session none" -- a transient
+  # confd lock (live-observed shortly after the mgmt bootstrap's own confd_cli session on the
+  # same node; it clears within a few seconds on its own, same class of issue as the confd
+  # config-store lock OcNOS hits, see netlab/ocnos/unlock.py in the out-of-tree reference). Any
+  # other rejection (Error:/Aborted: for a real reason/syntax error) fails immediately -- do not
   # retry those.
   shell: |
     set -o pipefail
-    CFG="/tmp/netlab-{{ netsim_action }}.cfg"
+    SRC="/tmp/netlab-{{ netsim_action }}.cfg"
+    PFX="/tmp/netlab-{{ netsim_action }}.chunk."
     MSG="{{ netsim_action }} configuration pushed by netlab"
-    for i in $(seq 1 6); do
-      OUT=$(printf 'config\nload merge %s\ncommit comment "%s"\nend\n' "$CFG" "$MSG" \
-            | confd_cli -C -u admin 2>&1)
-      if printf '%s' "$OUT" | grep -qi 'is locked by session'; then
-        sleep 3
-        continue
+    rm -f "${PFX}"*
+    awk -v pfx="$PFX" 'BEGIN{n=0} /^#COMMIT/{n++; next} {print > sprintf("%s%02d", pfx, n)}' "$SRC"
+    for f in "${PFX}"*; do
+      [ -e "$f" ] || continue   # no chunks -> module rendered empty config, nothing to push
+      for i in $(seq 1 6); do
+        OUT=$(printf 'config\nload merge %s\ncommit comment "%s"\nend\n' "$f" "$MSG" \
+              | confd_cli -C -u admin 2>&1)
+        if printf '%s' "$OUT" | grep -qi 'is locked by session'; then
+          sleep 3
+          continue
+        fi
+        break
+      done
+      printf '%s\n' "$OUT"
+      if printf '%s' "$OUT" | grep -qiE 'Error:|Aborted:|syntax error'; then
+        exit 1
       fi
-      break
     done
-    printf '%s\n' "$OUT"
-    if printf '%s' "$OUT" | grep -qiE 'Error:|Aborted:|syntax error'; then
-      exit 1
-    fi
   args:
     executable: /bin/bash
   register: arcos_deploy
