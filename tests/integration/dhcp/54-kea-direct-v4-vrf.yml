@@ -1,0 +1,57 @@
+---
+# NOT a pass/fail test -- a documented BOUNDARY PROBE (issue #41, increment 3).
+# `netlab create` on this topology fails FAST, by design, with:
+#   IncorrectValue in modules: Device type kea (node dut) does not support module vrf
+# This is a netlab-core/host-role boundary, not a kea gap -- see the long comment
+# in netsim/daemons/kea.yml next to `features:` for the full evidence trail (the
+# `vrf` module has no rendering path for any role:host/no-routing-engine device;
+# its templates are entirely per-NOS routing-protocol VRF config). Kept in-tree
+# so the exact failing command + error is reproducible and doesn't need
+# re-discovering. dhcp.vrf (relay-side VRF awareness) is proven instead by
+# tests/integration/dhcp/50-kea-relay.yml.
+message: |
+  Increment-3 probe: direct-attach DHCPv4 with the client AND kea's own
+  interface inside a VRF (no relay in between -- kea itself would need to be
+  VRF-aware on this link, unlike the relayed VRF case in 50-kea-relay.yml
+  where only the RELAY needed VRF awareness and kea just saw a giaddr).
+  EXPECTED OUTCOME: `netlab create` fails with "Device type kea does not
+  support module vrf" -- a proven netlab-core/host-role boundary (see
+  netsim/daemons/kea.yml), not a kea-specific gap. Do not expect this
+  topology to boot.
+
+defaults.sources.extra: [ ../wait_times.yml, ../warnings.yml ]
+
+provider: clab
+plugin: [ multilab ]
+defaults.multilab.id: 55
+
+defaults.device: iol
+defaults.devices.iol.clab.image: vrnetlab/cisco_iol:17.18.02
+
+vrfs:
+  red:
+
+nodes:
+  c1:
+  dut:
+    device: kea
+    module: [ dhcp, vrf ]
+    dhcp.server: true
+
+links:
+- c1:
+    ipv4: dhcp
+  dut:
+  vrf: red
+
+validate:
+  lease_v4_vrf:
+    description: Check for DHCPv4 address assignment (direct-attach, in VRF red)
+    wait: 60
+    wait_msg: Waiting for DHCPv4 to complete
+    nodes: [ c1 ]
+    devices: [ iol ]
+    pass: c1 got a dynamic address directly from kea inside VRF red
+    fail: No IPv4 address assigned
+    exec: "show ip interface brief"
+    valid: "'DHCP' in stdout"

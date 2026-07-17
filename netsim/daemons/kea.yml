@@ -27,7 +27,25 @@ libvirt:                        # Not yet available on libvirt
 features:
   dhcp:
     server: true
-    vrf: true
+    vrf: true             # inter-VRF DHCP RELAY awareness (see dhcp.j2's pool.vrf
+                           # user-context) -- NOT the same as declaring the netlab
+                           # `vrf` module itself (see below).
   initial:
     reload: false
     roles: [ host ]
+
+# Deliberately NOT declaring `features.vrf` (module support for the netlab `vrf`
+# module) -- proven, not just omitted. `module: [dhcp, vrf]` on a kea node fails
+# fast with "Device type kea does not support module vrf" (same as netlab's own
+# dnsmasq daemon, which also has no vrf feature). This is a netlab-core/host-role
+# boundary, not a kea-specific gap: the `vrf` module's rendering path
+# (netsim/ansible/templates/vrf/*.j2) is ENTIRELY per-NOS routing-protocol VRF
+# config (ospfv2-vrf/ospfv3-vrf etc.); the only non-routing-protocol vrf templates
+# in the whole tree are BIRD's (netsim/daemons/bird/vrf-*.j2), because BIRD is
+# itself a routing daemon. There is no generic "create a Linux VRF-lite device and
+# move an interface into it" path anywhere in netlab (module, clab provider, or
+# template layer) for a role:host node with no routing engine -- so a
+# directly-attached (non-relayed) client in a VRF is genuinely out of reach for
+# any host-role daemon, kea included. VRF awareness for kea only exists on the
+# RELAY side (see tests/integration/dhcp/50-kea-relay.yml): the relay does the
+# real VRF work and kea just reads giaddr + the relay's standard suboptions.
