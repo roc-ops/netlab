@@ -1,0 +1,2 @@
+router ospf {{'1' if netlab_device_type == 'eos' else ''}}
+  router-id {{ loopback.ipv4|ipaddr('address') }}

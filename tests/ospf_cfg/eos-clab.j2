@@ -1,0 +1,6 @@
+router ospf 1
+!
+{% for intf in netlab_interfaces %}
+interface {{ intf.ifname }}
+ ip ospf area 0.0.0.1
+{% endfor %}

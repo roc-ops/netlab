@@ -1,0 +1,5 @@
+router bgp {{ bgp.as }}
+  address-family evpn
+{% for ngb in bgp.neighbors if ngb.ipv6 is defined and evpn.transport == 'vxlan' %}
+    neighbor {{ ngb.ipv6 }} activate
+{% endfor %}
