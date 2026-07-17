@@ -15,6 +15,7 @@
 | Virtual network device | netlab device type | support level |
 | -----------------------| ------------------ | ------------- |
 | Arista vEOS/cEOS [❗](caveats-eos) | eos    | full          |
+| Arrcus ArcOS [❗](caveats-arcos) | arcos    | minimal       |
 | Aruba AOS-CX [❗](caveats-aruba) | arubacx  | full          |
 | Cisco 8000v [❗](caveats-cisco8000v) | cisco8000v | minimal |
 | Cisco ASAv [❗](caveats-asav)    | asav     | minimal       |
