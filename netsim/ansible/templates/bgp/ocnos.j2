@@ -6,6 +6,12 @@
   per-neighbor `neighbor <ip> remote-as`, `update-source lo` for iBGP, and
   `address-family <af> unicast` / `exit-address-family` blocks with `neighbor <ip> activate`.
   No whitespace-strip tags near "!" (OcNOS comment marker).
+
+  Route reflector (issue #38, netlab in-tree device): node.bgp.rr + bgp.rr_cluster_id ->
+  `bgp cluster-id`; per-neighbor n.rr_client -> `neighbor <ip> route-reflector-client`
+  (address-family scoped, like send-community/next-hop-self). Live-verified against
+  tests/integration/bgp/03-ibgp-rr.yml on vrnetlab/ipinfusion_ocnos:7.0.0-262: reflected
+  route, correct next hop, and RR cluster-id all present in the client's BGP table.
 #}
 {% if bgp.as is defined %}
 {# bgp.originate: OcNOS advertises a  only if it is in the RIB, so back each
@@ -16,6 +22,9 @@ ip route {{ pfx }} Null0
 router bgp {{ bgp.as }}
 {% if bgp.router_id is defined %}
  bgp router-id {{ bgp.router_id }}
+{% endif %}
+{% if bgp.rr|default(False) and bgp.rr_cluster_id|default(False) %}
+ bgp cluster-id {{ bgp.rr_cluster_id }}
 {% endif %}
 {% for n in bgp.neighbors | default([]) %}
 {% for af in ['ipv4','ipv6'] if n[af] is defined and n[af] is string %}
@@ -66,6 +75,9 @@ router bgp {{ bgp.as }}
 {% endif %}
 {% if n.next_hop_self | default(false) %}
   neighbor {{ n[af] }} next-hop-self
+{% endif %}
+{% if n.rr_client | default(false) %}
+  neighbor {{ n[af] }} route-reflector-client
 {% endif %}
 {% endfor %}
  exit-address-family
