@@ -23,7 +23,10 @@ network-instance {{ vname }} protocol OSPF p-{{ vname }}
  area {{ vdata.ospf.area | default("0.0.0.0") }}
 {% for l in vdata.ospf.interfaces|default([]) if l.ipv4 is defined %}
   interface {{ l.ifname }}
-{% if l.ospf.network_type|default("") == "point-to-point" or l.type|default("") == "p2p" %}
+{# same fix as templates/ospf/arcos.j2: only fall back to l.type == 'p2p' when
+   ospf.network_type wasn't explicitly set, so an explicit "broadcast" isn't overridden #}
+{% set nt = l.ospf.network_type|default('point-to-point' if l.type|default('') == 'p2p' else '') %}
+{% if nt == 'point-to-point' %}
    network-type POINT_TO_POINT_NETWORK
 {% endif %}
 {% endfor %}
@@ -39,7 +42,10 @@ network-instance {{ vname }} protocol OSPF3 p-{{ vname }}
  area {{ varea3 }}
 {% for l in vdata.ospf.interfaces|default([]) if l.ipv6 is defined %}
   interface {{ l.ifname }}
-{% if l.ospf.network_type|default("") == "point-to-point" or l.type|default("") == "p2p" %}
+{# same fix as templates/ospf/arcos.j2: only fall back to l.type == 'p2p' when
+   ospf.network_type wasn't explicitly set, so an explicit "broadcast" isn't overridden #}
+{% set nt = l.ospf.network_type|default('point-to-point' if l.type|default('') == 'p2p' else '') %}
+{% if nt == 'point-to-point' %}
    network-type POINT_TO_POINT_NETWORK
 {% endif %}
 {% endfor %}
@@ -64,7 +70,8 @@ network-instance {{ vname }} protocol ISIS i-{{ vname }}
 {% for l in vdata.isis.interfaces|default([]) %}
  interface {{ l.ifname }} enabled true
  interface {{ l.ifname }} af IPV4 UNICAST enabled true
-{% if l.type|default("") == "p2p" or l.isis.network_type|default("") == "point-to-point" %}
+{% set vnt = l.isis.network_type|default('point-to-point' if l.type|default('') == 'p2p' else '') %}
+{% if vnt == 'point-to-point' %}
  interface {{ l.ifname }} network-type POINT_TO_POINT
 {% endif %}
 {% if vdo_l1 %}
