@@ -1,0 +1,16 @@
+{#
+  OcNOS STP template — issue #11. Protocol selection (ieee/rstp/mstp) happens in
+  initial/ocnos.j2 (the Customer Bridge is created there). This renders per-port
+  options: edgeport for netlab port_type edge (parser-probed: spanning-tree
+  autoedge|bpdu-filter|bpdu-guard|edgeport ...).
+#}
+{% for l in netlab_interfaces if l.stp.port_type|default('') == 'edge' %}
+interface {{ l.ifname }}
+ spanning-tree edgeport
+!
+{% endfor %}
+{% for l in netlab_interfaces if l.stp.enable is defined and not l.stp.enable %}
+interface {{ l.ifname }}
+ spanning-tree disable
+!
+{% endfor %}
