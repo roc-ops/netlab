@@ -85,6 +85,26 @@ cat <<'FILE' >/etc/kea/kea-ctrl-agent.conf
 }
 FILE
 
+# VRF-lite launcher for the DHCP daemons. The netlab `vrf` module render
+# (netsim/daemons/kea/vrf.j2) writes the VRF name to /run/kea/vrf.<svc> when kea's
+# data interface(s) are enslaved into a Linux VRF; the daemon must then open its
+# sockets INSIDE that VRF. `ip vrf exec` sets SO_BINDTODEVICE on every socket the
+# process opens, which is exactly what kea's fallback/UDP socket needs to bind a
+# VRF-local address (a plain bind returns EADDRNOTAVAIL -- the address lives in the
+# VRF table, not the default one). No marker -> start normally (unchanged non-VRF
+# behavior), so this is transparent for every existing DHCP topology.
+cat <<'WRAPFILE' >/usr/local/bin/kea-daemon-start
+#!/bin/sh
+set -e
+svc="$1"                                   # dhcp4 | dhcp6
+marker="/run/kea/vrf.$svc"
+if [ -s "$marker" ]; then
+  exec ip vrf exec "$(cat "$marker")" /usr/sbin/kea-$svc -c /etc/kea/kea-$svc.conf
+fi
+exec /usr/sbin/kea-$svc -c /etc/kea/kea-$svc.conf
+WRAPFILE
+chmod +x /usr/local/bin/kea-daemon-start
+
 # supervisorctl control socket is needed by dhcp.j2's restart-fallback (used when a
 # daemon isn't answering the REST control agent) -- without [unix_http_server] /
 # [supervisorctl], supervisorctl has nothing to talk to.
@@ -106,7 +126,7 @@ serverurl=unix:///var/run/supervisor.sock
 supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
 
 [program:kea-dhcp4]
-command=/usr/sbin/kea-dhcp4 -c /etc/kea/kea-dhcp4.conf
+command=/usr/local/bin/kea-daemon-start dhcp4
 autorestart=true
 priority=10
 stdout_logfile=/dev/stdout
@@ -115,7 +135,7 @@ stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
 
 [program:kea-dhcp6]
-command=/usr/sbin/kea-dhcp6 -c /etc/kea/kea-dhcp6.conf
+command=/usr/local/bin/kea-daemon-start dhcp6
 autorestart=true
 priority=10
 stdout_logfile=/dev/stdout

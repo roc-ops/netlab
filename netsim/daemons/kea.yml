@@ -28,24 +28,39 @@ features:
   dhcp:
     server: true
     vrf: true             # inter-VRF DHCP RELAY awareness (see dhcp.j2's pool.vrf
-                           # user-context) -- NOT the same as declaring the netlab
-                           # `vrf` module itself (see below).
+                           # user-context) -- distinct from the netlab `vrf` MODULE
+                           # support declared just below.
   initial:
     reload: false
     roles: [ host ]
+  vrf: true               # netlab `vrf` MODULE support: kea participates in VRFs via
+                           # Linux VRF-lite (see below + netsim/daemons/kea/vrf.j2).
 
-# Deliberately NOT declaring `features.vrf` (module support for the netlab `vrf`
-# module) -- proven, not just omitted. `module: [dhcp, vrf]` on a kea node fails
-# fast with "Device type kea does not support module vrf" (same as netlab's own
-# dnsmasq daemon, which also has no vrf feature). This is a netlab-core/host-role
-# boundary, not a kea-specific gap: the `vrf` module's rendering path
-# (netsim/ansible/templates/vrf/*.j2) is ENTIRELY per-NOS routing-protocol VRF
-# config (ospfv2-vrf/ospfv3-vrf etc.); the only non-routing-protocol vrf templates
-# in the whole tree are BIRD's (netsim/daemons/bird/vrf-*.j2), because BIRD is
-# itself a routing daemon. There is no generic "create a Linux VRF-lite device and
-# move an interface into it" path anywhere in netlab (module, clab provider, or
-# template layer) for a role:host node with no routing engine -- so a
-# directly-attached (non-relayed) client in a VRF is genuinely out of reach for
-# any host-role daemon, kea included. VRF awareness for kea only exists on the
-# RELAY side (see tests/integration/dhcp/50-kea-relay.yml): the relay does the
-# real VRF work and kea just reads giaddr + the relay's standard suboptions.
+# kea supports the netlab `vrf` module through Linux VRF-lite -- this lets a
+# DIRECTLY-ATTACHED DHCP client and kea itself share an isolated VRF routing table
+# (no relay in between), proven by tests/integration/dhcp/54-kea-direct-v4-vrf.yml.
+#
+# How it works: declaring `features.vrf` puts kea on the vrf module's supported_on
+# list (netsim/augment/devices.py:build_module_support_lists), so `module: [dhcp, vrf]`
+# is accepted. The vrf module python (netsim/modules/vrf.py) is device-agnostic -- it
+# populates each in-VRF interface's `vrf` assignment and per-VRF ids/RDs with no
+# routing-engine assumptions -- so the kea node's data model carries the VRF just like
+# a NOS. The only kea-specific piece is the dataplane render netsim/daemons/kea/vrf.j2
+# (resolved via the `package:daemons` search dir + the `{device}/{module}.j2` path
+# pattern, exactly like kea/dhcp.j2): a config_mode 'sh' script that does
+# `ip link add <vrf> type vrf table <id>` + `ip link set <if> master <vrf>` and
+# re-applies the interface addresses that enslaving flushes. It mirrors the dataplane
+# half of netsim/ansible/templates/vrf/frr.data-plane.j2 (FRR is the only other
+# Linux-VRF-lite path in the tree, but layers zebra/BGP on top; kea needs none).
+#
+# Ordering makes it work without VRF-aware kea sockets: dhcp.yml sets
+# `config_after: [vrf]`, so the sequence inside the container is initial (assigns the
+# interface IP) -> vrf (creates the VRF, enslaves the interface, re-applies the IP) ->
+# dhcp (loads kea, which binds on the already-enslaved interface). DHCP direct-attach
+# is interface-scoped (raw AF_PACKET for v4, per-interface UDP for v6), so it serves
+# inside the VRF with no VRF-aware socket options -- verified with a live lease.
+#
+# NOTE: VRF awareness for kea ALSO exists on the RELAY side, independently of this
+# module support -- see tests/integration/dhcp/50-kea-relay.yml, where the relay does
+# the VRF work and kea just reads giaddr + the relay's standard suboptions. That path
+# does NOT render VRF-lite on kea (kea has no interface in the client's VRF there).
