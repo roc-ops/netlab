@@ -1,12 +1,94 @@
 ---
-- name: Push Candidate Config
-  template:
-    src: '{{ config_template }}'
-    dest: '/tmp/.{{ inventory_hostname }}.txt'
+# ArcOS config deploy (issue #39) -- Ansible network_cli via the arrcus.arcos collection.
+#
+# CONNECTION-MODEL FINDINGS (live-verified against a real ArcOS 8.2.1A.P2 node):
+#
+# 1. network_cli itself works fine: SSH auth as the bootstrap-created AAA user, terminal login,
+#    and the arrcus.arcos cliconf/terminal plugins all connect and operate correctly.
+#
+# 2. arrcus.arcos.arcos_config -- the collection's own dedicated config-push module -- is
+#    broken against this ArcOS build. Its cliconf's edit_config() (plugins/cliconf/arcos.py)
+#    unconditionally sends `config {mode}` as its first command, where `mode` is one of the
+#    module's three allowed values: terminal (the default), shared, exclusive. All three
+#    produce a command this confd_cli rejects -- live-verified: `config terminal` -> "syntax
+#    error: expecting configuration | full-configuration | history | parser" (plain `config`,
+#    no argument, is the only valid form -- matches wiki/okf/arcos-8.5/netlab-bootstrap.md).
+#    No argument_spec value produces bare `config`, so arcos_config hangs (60s command
+#    timeout) on every invocation. Collection/platform version-mismatch bug, on top of the
+#    argument_spec already not matching its own published docs (see git history here).
+#
+# 3. The natural-looking workaround -- send the rendered config as a `lines` list of
+#    individual commands via arrcus.arcos.arcos_command (whose run_commands() has no `config
+#    {mode}` wrapping) -- ALSO hangs, for a different reason: confd's block-indent syntax
+#    (`interface X` / ` enabled true` / `  subinterface 0` / ...) is a *file-parsing* format
+#    understood by `load merge <path>`, not a sequence of nested-context CLI commands. Typing
+#    `interface loopback0` interactively moves the session INTO an interface sub-context
+#    (changing the prompt); nothing in a flat one-line-per-command list ever types the `exit`
+#    needed to leave it before the next `interface swpN` line -- the session ends up stuck
+#    several context levels deep and the terminal plugin never sees a prompt it recognizes.
+#    Confirmed by reproducing the same hang this way.
+#
+# 4. The right *shape* of the fix: stage the already-rendered config file on the device with
+#    ansible.netcommon.net_put (SCP over the same network_cli connection -- live-verified
+#    working on its own), then drive `config` / `load merge <remote-path>` / `commit` / `end`
+#    as four flat commands via arrcus.arcos.arcos_command -- the exact same sequence the
+#    out-of-tree reference pipes into `docker exec ... confd_cli`, just carried over a real
+#    Ansible network_cli connection instead of a local docker exec. Manually replaying this
+#    exact four-command sequence over a raw SSH session (bypassing Ansible) succeeds instantly
+#    ("Commit complete.") -- so the device, the CLI grammar, and the config content are all
+#    provably correct.
+#
+# 5. STILL OPEN as of this increment: driven through Ansible's network_cli persistent
+#    connection, arcos_command (and arcos_config) reliably hit the 60s command timeout on this
+#    exact ArcOS 8.2.1A.P2 image, even after patching two confirmed bugs found while
+#    diagnosing it (both only reproduced against a *local* patched copy of the installed
+#    collection for diagnosis, then reverted -- this repo does not vendor or ship a patched
+#    collection):
+#      a) plugins/terminal/arcos.py's terminal_stdout_re prompt regex is missing `@` in its
+#         character class, so it never matches this platform's actual `user@host(config)#`
+#         prompt.
+#      b) plugins/cliconf/arcos.py and plugins/terminal/arcos.py both unconditionally open
+#         every session by sending `arcos_cli` as the first command -- a mode-switch that
+#         doesn't exist on this ArcOS build (`--------^ syntax error: expecting bash | cd |
+#         clear | ...`), leaving the session's parser state ambiguous for everything after it.
+#    Neither fix, alone or together, closed the gap in this increment's testing window --
+#    there is likely a third, not-yet-identified prompt/state-machine mismatch between this
+#    collection version and this ArcOS build. Net effect: config push through Ansible's
+#    network_cli connection is not yet reliably working end-to-end against this specific
+#    image/collection pairing. Follow-on work: pursue the third mismatch, try a different
+#    arrcus.arcos version, or coordinate with Arrcus on which collection version targets
+#    ArcOS 8.2.x.
+#
+# 6. The terminal plugin's error detection (terminal_stderr_re) only matches Cisco-style
+#    `% Error`, not ArcOS's actual `Error:`/`Aborted:`/`syntax error` -- so a rejected commit
+#    would otherwise be silently treated as success. Scan the returned output explicitly,
+#    mirroring the out-of-tree deploy task's same safeguard, once the hang above is resolved.
+#
+# One-time management bootstrap (enabling ssh-server + creating the arcadmin AAA user, and
+# changing the factory-default admin-user password so interfaces are even allowed to enable)
+# happens out-of-band via group_vars.netlab_start_exec in netsim/devices/arcos.yml -- NOT here.
 
-- name: Apply candidate config
-  arrcus.arcos.arcos_config:
-    src: "/tmp/.{{ inventory_hostname }}.txt"
-    load_operation: merge
-    comment: "initial config pushed by netsim"
-    delete_src_file: true
+- wait_for_connection:
+    timeout: 60
+  when: |
+    node_provider == 'clab' and ansible_connection == 'network_cli'
+
+- name: "net_put: stage {{ netsim_action }} config on the device"
+  ansible.netcommon.net_put:
+    src: "{{ config_template }}"
+    dest: "netlab-{{ netsim_action }}.cfg"
+
+- name: "arcos_command: load+commit netlab-{{ netsim_action }}.cfg"
+  arrcus.arcos.arcos_command:
+    commands:
+    - config
+    - "load merge netlab-{{ netsim_action }}.cfg"
+    - commit comment "{{ netsim_action }} configuration pushed by netlab"
+    - end
+  tags: [ print_action, always ]
+  register: arcos_output
+
+- name: Fail loudly if confd rejected any part of the candidate config
+  fail:
+    msg: "{{ netsim_action }} config push to {{ inventory_hostname }} was rejected: {{ arcos_output.stdout }}"
+  when: arcos_output.stdout | select('search', 'Error:|Aborted:|syntax error') | list | length > 0

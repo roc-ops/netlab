@@ -1,29 +1,43 @@
+{#
+  ArcOS initial configuration (issue #39). Rendered by arrcus.arcos.arcos_config over
+  network_cli -- the confd_cli block-indent CLI (OpenConfig-modelled), same dialect the
+  out-of-tree netlab/arcos/ device verified over gNMI/docker-exec. Ported from that reference
+  and from netsim/ansible/templates/initial/arcos.j2's 2020-2021 predecessor (Arrcus' own
+  original netlab contribution -- see git history).
+
+  Follow-on work (not yet in scope for this increment): LAG member/aggregate interfaces, SVI
+  (vlan module) interfaces.
+#}
 system hostname {{ inventory_hostname }}
-!
 !
 interface loopback0
  enable true
  subinterface 0
-   {% if 'ipv4' in loopback %}
-   ipv4 address {{ loopback.ipv4 | ansible.netcommon.ipv4('address') }} prefix-length 32
-   {% endif %}
-   {% if 'ipv6' in loopback %}
-   ipv6 address {{ loopback.ipv6 | ansible.netcommon.ipv6('address') }} prefix-length 64
-   {% endif %}
+{% if loopback.ipv4 is defined %}
+   ipv4 address {{ loopback.ipv4 | ansible.netcommon.ipv4("address") }} prefix-length 32
+{% endif %}
+{% if loopback.ipv6 is defined %}
+   ipv6 address {{ loopback.ipv6 | ansible.netcommon.ipv6("address") }} prefix-length 128
+{% endif %}
 !
-!
-!
-{% for l in interfaces|default([]) %}
+{% for l in interfaces|default([]) if l.type|default('') == 'loopback' and l.ifname != 'loopback0' %}
 interface {{ l.ifname }}
  enable true
  subinterface 0
-   {% if 'ipv4' in l %}
-   ipv4 address {{ l.ipv4 | ansible.netcommon.ipv4('address') }} prefix-length {{ l.ipv4 | ansible.netcommon.ipaddr('prefix') }}
-   {% endif %}
-   {% if 'ipv6' in l %}
-   ipv6 address {{ l.ipv6 | ansible.netcommon.ipv6('address') }} prefix-length {{ l.ipv6 | ansible.netcommon.ipaddr('prefix') }}
-   {% endif %}
+{% if l.ipv4 is defined and l.ipv4 is string %}
+   ipv4 address {{ l.ipv4 | ansible.utils.ipaddr('address') }} prefix-length {{ l.ipv4 | ansible.utils.ipaddr('prefix') }}
+{% endif %}
 !
 {% endfor %}
-
-no lldp interface ma1
+{% for l in netlab_interfaces if l.type|default('') != 'loopback' %}
+interface {{ l.ifname }}
+ enable true
+ subinterface 0
+{% if l.ipv4 is defined and l.ipv4 %}
+   ipv4 address {{ l.ipv4 | ansible.netcommon.ipv4("address") }} prefix-length {{ l.ipv4 | ansible.netcommon.ipaddr("prefix") }}
+{% endif %}
+{% if l.ipv6 is defined and l.ipv6 %}
+   ipv6 address {{ l.ipv6 | ansible.netcommon.ipv6("address") }} prefix-length {{ l.ipv6 | ansible.netcommon.ipaddr("prefix") }}
+{% endif %}
+!
+{% endfor %}
