@@ -1,0 +1,19 @@
+# SONiC bgp.originate — issue #19. A node injects a prefix into BGP for which it
+# has NO interface/route (native bgp.originate, now part of the BGP module). s1
+# originates 10.201.9.0/24; the eBGP peer s2 must receive & install it.
+#   cd netlab/sonic && netlab up sonic-bgporiginate.yml
+provider: clab
+plugin: [ multilab ]
+defaults:
+  device: sonic_clab
+  multilab:
+    id: 52
+module: [ bgp ]
+nodes:
+  s1:
+    bgp.as: 65001
+    bgp.originate: [ 10.201.9.0/24 ]
+  s2:
+    bgp.as: 65002
+links:
+  - s1-s2

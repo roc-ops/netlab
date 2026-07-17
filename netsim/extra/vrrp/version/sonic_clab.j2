@@ -1,0 +1,20 @@
+#!/bin/bash
+#
+# Ported verbatim from roccontlab netlab/sonic/templates/vrrp.version/sonic.j2 (out-of-tree,
+# proven live) for the in-tree sonic_clab device (issue #40) -- self-contained vtysh -f script,
+# no adaptation needed.
+#
+# vrrp.version plugin (issue #19) — FRR vrrpd supports both VRRP v2 and v3. netlab
+# renders this as a separate per-node config step; FRR requires the vrrp instance
+# to be shut down before its version can change, so: shutdown -> version -> no shutdown.
+set -e
+cat >/tmp/netlab-vrrp-version <<CONFIG
+{% for intf in interfaces if intf.gateway.protocol|default('') == 'vrrp' %}
+interface {{ intf.ifname }}
+  vrrp {{ intf.gateway.vrrp.group }} shutdown
+  vrrp {{ intf.gateway.vrrp.group }} version {{ gateway.vrrp.version|default(3) }}
+  no vrrp {{ intf.gateway.vrrp.group }} shutdown
+{% endfor %}
+do write
+CONFIG
+vtysh -f /tmp/netlab-vrrp-version
