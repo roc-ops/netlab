@@ -1,0 +1,75 @@
+---
+message: |
+  Use this topology to test the 'kea' daemon device rendering a DHCPv4 option-3
+  default gateway (netlab's `gateway` module, VRRP) into a served pool, and prove
+  a client actually installs a working default route from it -- not just that the
+  offer carries the option. r1 is the VRRP master (and the DHCP relay to kea);
+  r2 is a VRRP backup with no DHCP role. Adapted from the proven out-of-tree
+  roccontlab/netlab/kea/kea-dhcp-gw.yml into the in-tree kea daemon device's
+  assigned multilab namespace (55).
+
+defaults.sources.extra: [ ../wait_times.yml, ../warnings.yml ]
+
+provider: clab
+plugin: [ multilab ]
+defaults.multilab.id: 55
+
+defaults.device: iol
+defaults.devices.iol.clab.image: vrnetlab/cisco_iol:17.18.02
+
+module: [ gateway ]
+gateway.protocol: vrrp
+
+nodes:
+  srv:
+    device: kea
+  r1:
+    module: [ dhcp, gateway ]
+    gateway.vrrp.priority: 200   # master
+  r2:
+    module: [ gateway ]
+    gateway.vrrp.preempt: false  # backup, don't preempt r1 back once it's up
+  h1:
+
+links:
+- srv-r1
+- r1:
+    dhcp.server: [ srv ]
+  r2:
+  h1:
+    dhcp.client.ipv4: true
+  gateway: true
+
+validate:
+  r1_vrrp_master:
+    description: r1 is the active VRRP master owning the gateway VIP
+    wait: 30
+    wait_msg: Waiting for VRRP to converge
+    nodes: [ r1 ]
+    devices: [ iol ]
+    pass: r1 owns the VRRP VIP as master
+    fail: r1 is not the VRRP master
+    exec: "show vrrp"
+    valid: "'State is MASTER' in stdout"
+
+  h1_lease_dhcp:
+    description: h1 leased a dynamic address via DHCP
+    wait: 60
+    wait_msg: Waiting for h1 to lease an address
+    nodes: [ h1 ]
+    devices: [ iol ]
+    pass: h1 has a dynamic address from kea
+    fail: h1 has no dynamic address
+    exec: "show ip interface brief"
+    valid: "'DHCP' in stdout"
+
+  h1_default_route:
+    description: h1 installed a default route from the DHCP-supplied gateway (option 3)
+    wait: 15
+    wait_msg: Waiting for the DHCP-installed default route to appear in the RIB
+    nodes: [ h1 ]
+    devices: [ iol ]
+    pass: h1 has a working default route via the gateway module's VRRP VIP
+    fail: h1 has no default route from DHCP
+    exec: "show ip route"
+    valid: "'0.0.0.0/0' in stdout"

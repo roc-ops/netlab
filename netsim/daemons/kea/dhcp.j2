@@ -5,9 +5,15 @@
 # ipv6 prefix), validates each, then reloads the running daemon(s) via the REST control
 # agent (falls back to a supervisord restart if the agent isn't up yet). Socket/logger/
 # hook paths match the image defaults baked in netsim/daemons/kea/Dockerfile, so the
-# control agent keeps working. Pools have no "interface" binding here -- these subnets
-# are reached through a relay (giaddr for v4, link-address for v6), not directly
-# attached, which is how Kea's normal subnet-selection is meant to be used.
+# control agent keeps working. A pool gets no "interface" binding when it's reached
+# through a relay (giaddr for v4, link-address for v6) -- Kea's normal relayed subnet
+# selection handles that on its own. But when kea itself has a directly-attached
+# interface on the pool's own subnet (no relay in between), Kea CANNOT select that
+# subnet for a client's link-local-sourced SOLICIT/DISCOVER without an explicit
+# "interface" binding on the subnet -- found live: a directly-attached v6 client kept
+# getting NoAddrsAvail/"Server could not select subnet for this client" until the
+# subnet6 entry got an explicit "interface". So: cross-reference each pool's prefix
+# against kea's own `interfaces` to detect direct attachment and add "interface" then.
 set -e
 
 cat > /etc/kea/kea-dhcp4.conf <<'KEACONF'
@@ -38,10 +44,21 @@ cat > /etc/kea/kea-dhcp4.conf <<'KEACONF'
 {% for pool in dhcp.pools|default([]) if 'ipv4' in pool %}
 {%   set pidx = loop.index %}
 {%   set outer_last = loop.last %}
+{%   set ns4 = namespace(direct_if=none) %}
+{%   set pool_net4 = pool.ipv4|ipaddr('network') %}
+{%   set pool_plen4 = pool.ipv4|ipaddr('prefix') %}
+{%   for intf in interfaces|default([]) if intf.ifname != 'eth0' and intf.ipv4 is defined %}
+{%     if (intf.ipv4|ipaddr(pool_plen4)|ipaddr('network')) == pool_net4 %}
+{%       set ns4.direct_if = intf.ifname %}
+{%     endif %}
+{%   endfor %}
       {
         "id": {{ pidx }},
         "subnet": "{{ pool.ipv4 }}",
         "comment": "{{ pool.name }}{{ ' (vrf ' + pool.vrf + ')' if pool.vrf is defined else '' }}",
+{%   if ns4.direct_if %}
+        "interface": "{{ ns4.direct_if }}",
+{%   endif %}
         "pools": [ { "pool": "{{ pool.ipv4|ipaddr(1)|ipaddr('address') }} - {{ pool.ipv4|ipaddr(-2)|ipaddr('address') }}" } ],
 {%   if pool.gateway.ipv4 is defined %}
         "option-data": [
@@ -125,10 +142,21 @@ cat > /etc/kea/kea-dhcp6.conf <<'KEACONF6'
 {% for pool in dhcp.pools|default([]) if 'ipv6' in pool %}
 {%   set pidx = loop.index %}
 {%   set outer_last = loop.last %}
+{%   set ns6 = namespace(direct_if=none) %}
+{%   set pool_net6 = pool.ipv6|ipaddr('network') %}
+{%   set pool_plen6 = pool.ipv6|ipaddr('prefix') %}
+{%   for intf in interfaces|default([]) if intf.ifname != 'eth0' and intf.ipv6 is defined %}
+{%     if (intf.ipv6|ipaddr(pool_plen6)|ipaddr('network')) == pool_net6 %}
+{%       set ns6.direct_if = intf.ifname %}
+{%     endif %}
+{%   endfor %}
       {
         "id": {{ pidx }},
         "subnet": "{{ pool.ipv6 }}",
         "comment": "{{ pool.name }}{{ ' (vrf ' + pool.vrf + ')' if pool.vrf is defined else '' }}",
+{%   if ns6.direct_if %}
+        "interface": "{{ ns6.direct_if }}",
+{%   endif %}
 {#     bounded range like netlab's own dnsmasq daemon template uses for v6 (a /64's full
        range is impractically large to hand ipaddr(-2) the same way as v4) #}
         "pools": [ { "pool": "{{ pool.ipv6|ipaddr(1)|ipaddr('address') }} - {{ pool.ipv6|ipaddr(1024)|ipaddr('address') }}" } ],
