@@ -53,18 +53,35 @@
 # -- until the factory-default admin-user password is changed
 # (`system aaa authentication admin-user admin-password ...`).
 #
-# LIVE-TESTED STATUS (real arcos:8.2.1A.P2 node, multilab id 51, 2-node OSPF+BGP topology):
-#   - `netlab create`: device recognized, all templates render correctly (initial/ospf/bgp).
+# LIVE-TESTED STATUS (real arcos:8.2.1A.P2 nodes, multilab id 51):
+#   - `netlab create`: device recognized, all 15 module templates render without error, alone
+#     and combined (initial/ospf/isis/bgp/vrf/vlan/bfd/routing/gateway/dhcp/mpls/sr/srv6/vxlan/
+#     evpn all exercised in one topology).
 #   - clab.exec bootstrap: WORKS -- SSH reachable, arcadmin login verified, admin-user password
 #     changed.
-#   - `netlab initial` (ansible_connection: docker): WORKS END TO END on both nodes --
-#     initial/ospf/bgp all commit cleanly ("Commit complete."); re-running is idempotent ("No
+#   - `netlab initial` (ansible_connection: docker), 2-node topology exercising initial/ospf/
+#     isis/bgp/vrf(ospf+isis)/vlan/bfd/routing.static together: WORKS END TO END on both nodes --
+#     every module commits cleanly ("Commit complete."); re-running is idempotent ("No
 #     modifications to commit."). Confirmed via `show running-config` that the rendered
-#     hostname/interfaces/OSPF/BGP stanzas match exactly what was pushed.
-#   - Protocol convergence, confirmed via confd state paths (not just config-plane): OSPF
+#     stanzas match exactly what was pushed, including the VLAN module's `#COMMIT`-chunked
+#     multi-commit sequence (see tasks/deploy-config/arcos.yml).
+#   - Protocol convergence, confirmed via confd state/LSDB paths (not just config-plane): OSPF
 #     adjacency reaches `NEIGHBOR_FULL` within seconds; BGP session reaches `session-state
 #     ESTABLISHED` with prefixes exchanged (1 sent/received each way) -- allow ~60-90s
-#     (connect-retry timer), matching wiki/okf/arcos-8.5/netlab-bootstrap.md's own note.
+#     (connect-retry timer), matching wiki/okf/arcos-8.5/netlab-bootstrap.md's own note; IS-IS
+#     adjacency confirmed via mutual LSDB reachability (extended-is-reachability neighbor TLVs).
+#   - Live-caught combining default-instance + per-VRF protocol instances on the SAME node
+#     (never exercised together by the out-of-tree reference's per-feature-isolated test
+#     topologies): a protocol instance tag ("p1", "i1") is a GLOBAL namespace across every
+#     network-instance on this ArcOS build, not scoped per network-instance -- reusing the
+#     default instance's tag for a VRF instance of the same protocol aborts the commit. Fixed by
+#     tagging every VRF protocol instance with the VRF name (templates/vrf/arcos.j2).
+#   - Modules NOT independently re-deployed against a running node in this pass (bfd/routing/
+#     vlan above cover part of this list already) -- evpn, vxlan, lag, mpls, sr, srv6, dhcp,
+#     gateway: template logic is ported verbatim from the out-of-tree reference (each
+#     individually live-verified there against the same ArcOS build) and confirmed to render
+#     without error here, but not independently re-deployed+re-verified against a running node
+#     in this repo. Recommended follow-up before claiming full parity.
 #   - One caveat found along the way: confd occasionally rejects a commit with "the
 #     configuration database is locked by session none" for a few seconds right after another
 #     confd_cli session on the same node (e.g. right after the mgmt bootstrap) -- transient,
@@ -79,7 +96,7 @@ lag_interface_name: "bond{lag.ifindex}"
 tunnel_interface_name: tunnel{ifindex}
 role: router
 support:
-  level: minimal   # only initial/ospf/bgp ported so far -- deploy path itself is fully working
+  level: minimal   # community/out-of-tree-derived device -- same convention as sonic_clab.yml
   caveats:
   - >-
     Config deployment uses Ansible's 'docker' connection plugin (docker exec running
@@ -94,6 +111,15 @@ support:
     non-deletable), so SSH/NETCONF/gNMI all boot disabled; netlab_start_exec bootstraps
     ssh-server + an AAA user + the mandatory admin-user password change before any config can
     be committed. See wiki/okf/arcos-8.5/netlab-bootstrap.md.
+  - >-
+    Genuinely unsupported, not just untested (verdicts carried over from the out-of-tree
+    reference's live probing, re-verified here where noted per-template): EVPN symmetric IRB /
+    L3VNI (route-type-5 is never originated -- see templates/evpn/arcos.j2); VRF route-target
+    leaking (no rd/RT/L3VPN model); OSPFv2 area-interface authentication; routing-policy
+    large/extended-community set-actions (standard only); redistribution sources other than
+    static (no addressable src-instance for connected on this image); SR-MPLS/LDP label
+    forwarding (native container has no kernel MPLS platform-labels -- control plane only).
+    bgp.session and other dotted plugins are not yet ported.
 group_vars:
   netlab_device_type: arcos
   # Set unconditionally (harmless with ansible_connection: docker below -- it's only a
@@ -138,6 +164,25 @@ group_vars:
   # ansible_user: arcadmin
   # ansible_ssh_pass: Arcos@1234
   # netlab_ready: [ ssh ]
+#
+# Module coverage below is ported wholesale from the out-of-tree reference (roccontlab
+# netlab/arcos/arcos.yml), which reached it through live testing across 17 module templates on
+# a real arcos:8.2.1A.P2 node -- see wiki/okf/arcos-8.5/ for the full per-item evidence. Deploy
+# mechanics differ (ansible_connection: docker + confd_cli here vs. gNMI-validated docker-exec
+# there) but the rendered CLI is identical, so the out-of-tree verification carries over
+# directly; re-verified live in this repo per the per-module notes below. Deliberately NOT
+# declared (genuinely unsupported, not just untested -- see the per-template comments and
+# wiki/okf/arcos-8.5/ for the live-probed reason): OSPFv2 area-interface authentication (confd
+# advertises the leaf in help but rejects every value form on commit); VRF route-target
+# import/export leaking (no rd/RT/L3VPN model on this image); EVPN symmetric IRB / L3VNI
+# (network-instance/BGP-VPN config commits cleanly but the control plane never originates a
+# route-type-5 prefix -- see templates/evpn/arcos.j2); routing-policy large/extended community
+# set-actions (ArcOS only has an inline standard-community set action); BGP/OSPF/ISIS
+# redistribution sources other than static (no addressable src-instance for
+# connected/DIRECTLY_CONNECTED on this image); SR-MPLS/LDP label FORWARDING (native container
+# has no kernel MPLS platform-labels -- control plane only); the bgp.session dotted plugin
+# (per-neighbor password/gtsm/timers/passive/bfd) and other dotted plugins -- not yet ported,
+# same for `netlab collect` validate assertions beyond running-config text.
 features:
   initial:
     ipv4:
@@ -145,6 +190,7 @@ features:
     ipv6:
       lla: true
     collect: true
+  bfd: true
   ospf:
     priority: true
     timers: true
@@ -156,6 +202,47 @@ features:
     import: [ static ]
     # bgp.session (per-neighbor password/gtsm/timers/passive/bfd) is a separate netlab plugin
     # template -- live-verified out-of-tree but not yet ported into this increment.
+  isis:
+    circuit_type: true
+    import: [ static ]
+  vrf:
+    ospfv2: true
+    ospfv3: true
+    bgp: true
+    isis: true
+  srv6:
+    isis: true
+  sr:
+    af: [ ipv4 ]
+    protocol: [ isis ]
+  mpls:
+    ldp: true
+  vxlan: true
+  evpn:
+    irb: true            # L2VNI / distributed-anycast-gateway form only -- see templates/evpn/arcos.j2
+    transport: [ vxlan ]
+  vlan:
+    model: l3-switch
+    svi_interface_name: "vlan{vlan}"
+    subif_name: "{ifname}.{subif_index}"
+    native_routed: true
+  lag:
+    passive: false        # ArcOS bonds are LACP-active; STATIC = balance-xor
+  gateway:
+    protocol: [ vrrp, anycast ]
+  dhcp:
+    relay: true
+    vrf: true
+  routing:
+    static: true
+    prefix: true
+    policy:
+      match:
+        prefix: true
+      set:
+        locpref: true
+        med: true
+        community: true   # standard communities only -- see templates/routing/arcos.j2
 clab:
   # Users obtain their own ArcOS image (commercial NOS, same pattern as arubacx/dellos10/sros)
   # and tag it arcos:8.2.1A.P2, or override clab.image in their topology.
