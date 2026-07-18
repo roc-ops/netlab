@@ -35,6 +35,10 @@ features:
   initial:
     ipv4: True
     ipv6: True
-  # Network-side modules (ospf/bgp/isis/vrf/vlan/mpls/lag/gateway...) get declared here as their
-  # Casa NSI render templates land in #53; the DOCSIS access-side custom `docsis` module in #48.
-  # Kept minimal now so the scaffold transforms cleanly.
+  # Network-side (NSI) modules — declared as their Casa NSI render templates land (RocContLab #64,
+  # grounded in vendor-docs/casa-8.8 NSI cmd ref). DOCSIS access-side = custom `docsis` module (#48).
+  ospf:
+    # Casa NSI Ch.23. OSPFv2 = `router ospf` + `network <ip>/<prefix> area` statements;
+    # OSPFv3 = `router ospf6` + interface `ipv6 router ospf <pid> area`. Rendered: network_type,
+    # cost, priority, bfd, passive, router_id. (timers/password/import/areas = follow-up in #64.)
+    priority: true

@@ -3,6 +3,8 @@
   External device — renders the config artifact; netlab does not deploy it.
   Casa CLI: `interface gige <slot>/<port>` / `interface loopback <n>`;
   IPv4 = dotted netmask (`ip address <ip> <mask>`), IPv6 = CIDR (`ipv6 address <addr>/<len>`).
+  netlab_interfaces = [loopback] + interfaces (loopback first); the mgmt interface is NOT
+  in this list (it lives in the `mgmt` var) so management reachability is never touched.
 #}
 hostname {{ inventory_hostname.replace("_","-") }}
 !
@@ -17,16 +19,8 @@ interface {{ l.ifname }}
 {% if "ipv6" in l and l.ipv6 is string %}
   ipv6 address {{ l.ipv6 }}
 {% endif %}
+{% if l.type != 'loopback' %}
   no shutdown
+{% endif %}
 !
 {% endfor %}
-{% if loopback is defined %}
-interface {{ loopback.ifname }}
-{% if "ipv4" in loopback %}
-  ip address {{ loopback.ipv4|ansible.utils.ipaddr("address") }} {{ loopback.ipv4|ansible.utils.ipaddr("netmask") }}
-{% endif %}
-{% if "ipv6" in loopback %}
-  ipv6 address {{ loopback.ipv6 }}
-{% endif %}
-!
-{% endif %}
