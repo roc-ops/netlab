@@ -471,3 +471,106 @@ attributes:
                   _keys:
                     kind: { type: str, _required: True }   # qam | ofdm | pon
                     ref:  { type: str, _required: True }
+    # DOCSIS Set-top Gateway (node-scoped) — `dsg ...`. Guardrail: dcd_global_enable / unicast_port
+    # box-wide singletons ADD-only; timer-id / channel-list / client-list / vendor-param-id /
+    # tunnel-group / tunnel additive by id. (Per-QAM `channel <n> dsg ...` binding = follow-up.)
+    dsg:
+      type: dict
+      _keys:
+        globals:
+          type: dict
+          _keys:
+            dcd_global_enable: { type: bool }
+            unicast_port:      { type: int }
+        timers:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              t1: { type: int, _required: True }
+              t2: { type: int, _required: True }
+              t3: { type: int, _required: True }
+              t4: { type: int, _required: True }
+        channel_lists:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              channels:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    channel_id: { type: int, _required: True }
+                    frequency:  { type: int, _required: True }
+        client_lists:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              clients:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    client_id:       { type: int, _required: True }
+                    id_type:         { type: str, _required: True }   # appId | broadcast | caSysId | macAddr
+                    id_value:        { type: str, _required: True }
+                    vendor_param_id: { type: int }
+        vendor_params:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              vendors:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    vendor_id: { type: int, _required: True }
+                    oui:       { type: str, _required: True }
+                    value:     { type: str }
+        tunnel_groups:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              channels:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    channel_id:      { type: int, _required: True }
+                    qam:             { type: str, _required: True }   # slot/port/chan
+                    rule_priority:   { type: int }
+                    vendor_param_id: { type: int }
+        tunnels:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:            { type: int, _required: True }
+              group:         { type: int }
+              dst_address:   { type: str }   # xxxx.xxxx.xxxx
+              client_list:   { type: int }
+              service_class: { type: str }
+              classifiers:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    id:               { type: int, _required: True }
+                    priority:         { type: int, _required: True }
+                    source:           { type: str, _required: True }   # ip/mask (or ipv6 form)
+                    ipv6:             { type: bool }
+                    destination_ip:   { type: str, _required: True }
+                    dest_port_start:  { type: int }
+                    dest_port_end:    { type: int }
+                    indcd:            { type: bool }
+                    indcd_port_start: { type: int }
+                    indcd_port_end:   { type: int }
