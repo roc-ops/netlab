@@ -347,3 +347,92 @@ attributes:
               mac_mask:           { type: str }
               service_type_id:    { type: int }
               restricted_grp_ref: { type: int }
+    # DOCSIS multicast (node-scoped) — `multicast ...` + `cable igmp static-group`. Guardrail: box-wide
+    # singletons (mode/load-balance/max-util/default-scn/authorization) ADD-only; group config/qos/
+    # encryption (by id) + authorization profiles (by name) + static-groups (by address) additive.
+    # (Per-MAC-domain mgmd = follow-up.) Fields = CableLabs docs-multicast-qos / -authorization leaves.
+    multicast:
+      type: dict
+      _keys:
+        globals:
+          type: dict
+          _keys:
+            mode:                           { type: str }   # manual | one-llid-per-group | single-llid
+            load_balance_initial_tech:      { type: str }
+            max_channel_util:               { type: int }
+            default_grp_service_class_name: { type: str }
+            authorization:
+              type: dict
+              _keys:
+                enable:          { type: bool }
+                default_action:  { type: str }   # deny | permit
+                max_session_num: { type: int }
+        group_qos:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:                 { type: int, _required: True }
+              service_class_name: { type: str, _required: True }
+              aggregate_max_sess: { type: int }    # aggregate mode; omit for `single` (per-session SF)
+              single:             { type: bool }   # documentary: single mode (the default when no aggregate)
+              app_id:             { type: int }
+        group_encryption:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:        { type: int, _required: True }
+              algorithm: { type: str, _required: True }   # aes128 | cmts | des40 | des56
+        group_config:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:             { type: int, _required: True }
+              group_address:  { type: str }
+              source_address: { type: str }
+              qos_id:         { type: int }
+              encryption_id:  { type: int }
+              phs_id:         { type: int }
+              priority:       { type: int }
+              tos_high:       { type: int }
+              tos_low:        { type: int }
+              tos_mask:       { type: int }
+              vrf:            { type: str }
+        authorization_profiles:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              name: { type: str, _required: True }
+              desc: { type: str }
+              session_rules:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    id:             { type: int, _required: True }
+                    action:         { type: str, _required: True }   # accept | deny
+                    source_prefix:  { type: str, _required: True }
+                    group_prefix:   { type: str, _required: True }
+                    ipv6:           { type: bool }
+                    priority:       { type: int }
+                    vrf:            { type: str }
+        static_groups:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              group:       { type: str, _required: True }
+              ipv6:        { type: bool }
+              source:      { type: str }
+              dsid:        { type: int }
+              description: { type: str }
+              channels:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    kind: { type: str, _required: True }   # qam | ofdm | pon
+                    ref:  { type: str, _required: True }
