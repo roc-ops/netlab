@@ -333,6 +333,28 @@ attributes:
               enable:        { type: bool }
               disable_start: { type: int }
               disable_end:   { type: int }
+        execution_rule:                    # Casa-specific (non-DOCSIS) execution rules
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              rule_id:            { type: int, _required: True }   # 1-16
+              methods:            { type: list, _subtype: { type: str } }   # e.g. "modem", "utilization dynamic"
+              upstream_method:    { type: str }
+              threshold_load:
+                type: dict
+                _keys:
+                  load:    { type: int }
+                  enforce: { type: int }
+                  minimum: { type: int }
+              rebalance_interval: { type: int }   # cable modem rebalance-interval (60-3600)
+              retry_interval:
+                type: dict
+                _keys:
+                  first:  { type: int }
+                  second: { type: int }
+              interval:           { type: int }
+              enable:             { type: bool }
         load_balancing_policy:
           type: list
           _subtype:
@@ -344,7 +366,8 @@ attributes:
                 _subtype:
                   type: dict
                   _keys:
-                    rule_ref: { type: int, _required: True }
+                    rule_ref:  { type: int, _required: True }
+                    rule_type: { type: str }   # basic (default) | execution
         general_grp_defaults:
           type: dict
           _keys:
