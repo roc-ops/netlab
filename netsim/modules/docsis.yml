@@ -272,3 +272,78 @@ attributes:
               cmts_cm_eae_exclusion_id: { type: int, _required: True }
               mac_address:              { type: str, _required: True }
               mac_address_mask:         { type: str }
+    # DOCSIS load balancing (node-scoped) — `load-balance ...`. Guardrail: `enable` +
+    # `general-group default-settings` are box-wide singletons (ADD-only); basic-rule / policy /
+    # restricted-group / restricted-cm additive by id; groups guarded against the domains they touch.
+    load_balancing:
+      type: dict
+      _keys:
+        enable: { type: bool }
+        basic_rule:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              rule_id:       { type: int, _required: True }
+              enable:        { type: bool }
+              disable_start: { type: int }
+              disable_end:   { type: int }
+        load_balancing_policy:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              policy_id: { type: int, _required: True }
+              load_balance_rule:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    rule_ref: { type: int, _required: True }
+        general_grp_defaults:
+          type: dict
+          _keys:
+            enable:     { type: bool }
+            policy_ref: { type: int }
+            init_tech:  { type: str }
+        general_grp_cfg:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              mac_domain_ref: { type: int, _required: True }
+              enable:         { type: bool }
+              policy_ref:     { type: int }
+              init_tech:      { type: str }
+              fiber_node_list:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    cm_service_group_ref: { type: str, _required: True }
+        restricted_grp_cfg:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              res_grp_id: { type: int, _required: True }
+              enable:     { type: bool }
+              policy_ref: { type: int }
+              init_tech:  { type: str }
+              grp_mac_domain:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    mac_domain_ref: { type: int, _required: True }
+              service_type_id_list: { type: list, _subtype: { type: int } }
+        restrict_cm_cfg:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              restricted_cm_id:   { type: int, _required: True }
+              mac_addr:           { type: str, _required: True }
+              mac_mask:           { type: str }
+              service_type_id:    { type: int }
+              restricted_grp_ref: { type: int }
