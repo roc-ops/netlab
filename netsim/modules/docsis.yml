@@ -166,3 +166,50 @@ attributes:
           required_attribute_mask:  { type: str }
           forbidden_attribute_mask: { type: str }
           aqm_enable:               { type: bool }
+    # Subscriber management (node-scoped) — CPE filter groups (`docsis submgt ip-filter`, additive)
+    # + box-wide `docsis submgt default` singletons. Guardrail: filter groups define a FREE group
+    # id; a box-wide default may only be ADDED (never overwrites a live one — it touches every domain).
+    subscriber_management:
+      type: dict
+      _keys:
+        defaults:                        # box-wide `docsis submgt default <kw> <val>`
+          type: dict
+          _keys:
+            cpe_active:                  { type: bool }
+            cpe_learnable:               { type: bool }
+            cpe_max_ipv4:                { type: int }
+            cpe_max_ipv6:                { type: int }
+            subscriber_downstream_filter:{ type: int }
+            subscriber_upstream_filter:  { type: int }
+            cm_downstream_filter:        { type: int }
+            cm_upstream_filter:          { type: int }
+            ps_downstream_filter:        { type: int }
+            ps_upstream_filter:          { type: int }
+            mta_downstream_filter:       { type: int }
+            mta_upstream_filter:         { type: int }
+            stb_downstream_filter:       { type: int }
+            stb_upstream_filter:         { type: int }
+        filter_groups:                   # `docsis submgt ip-filter <grp> <rule> {accept|deny} ...`
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              group_id: { type: int, _required: True }
+              rules:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    rule_id:                { type: int, _required: True }
+                    filter_action:          { type: str }   # permit | deny
+                    cm_interface_mask:      { type: str }
+                    source_address:         { type: str }
+                    destination_address:    { type: str }
+                    source_port_start:      { type: int }
+                    source_port_end:        { type: int }
+                    destination_port_start: { type: int }
+                    destination_port_end:   { type: int }
+                    ip_protocol:            { type: int }
+                    ip_tos_low:             { type: int }
+                    ip_tos_high:            { type: int }
+                    ip_tos_mask:            { type: int }
