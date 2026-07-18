@@ -56,6 +56,16 @@ attributes:
                     interleave:         { type: int }
                     pilot_scale_factor: { type: int }
                     up_down_trap:       { type: bool }
+              dsg:                       # per-DS-channel DSG binding — `channel <n> dsg ...`
+                type: dict               # attaches node-global dsg objects + enables DCD on the DS set
+                _keys:
+                  channel:         { type: int }    # starting channel index (default 0)
+                  count:           { type: int }    # channels to apply to (default: the DS SC-QAM set)
+                  dcd_enable:      { type: bool }
+                  interval:        { type: int }    # 2-10 (DCD interval, 100ms ticks)
+                  timer_id:        { type: int }
+                  vendor_param_id: { type: int }
+                  channel_list:    { type: int }
           upstream:
             type: dict
             _keys:
