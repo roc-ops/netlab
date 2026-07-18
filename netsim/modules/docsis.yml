@@ -129,3 +129,40 @@ attributes:
               symbols: { type: int }
               cycle:   { type: int }
               offset:  { type: int }
+    # Global QoS service classes (node-scoped) — `cable service-class <id>` with a `name` (SCN).
+    # MAC-domain / CM-config service flows reference the SCN by name. Guardrailed: a plan may
+    # DEFINE a service class only on a free id + free name. Fields are the CableLabs docs-qos
+    # leaves (mapped to Casa keywords in render_service_class).
+    service_classes:
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          id:                       { type: int, _required: True }   # Casa config handle
+          name:                     { type: str, _required: True }   # SCN, <=15 chars
+          direction:                { type: str }                    # upstream | downstream
+          scheduling_type:          { type: str }
+          priority:                 { type: int }
+          max_traffic_rate:         { type: int }
+          max_traffic_burst:        { type: int }
+          min_reserved_rate:        { type: int }
+          min_reserved_packet:      { type: int }
+          max_concatenated_burst:   { type: int }
+          peak_traffic_rate:        { type: int }
+          max_latency:              { type: int }
+          nominal_polling_interval: { type: int }
+          tolerated_poll_jitter:    { type: int }
+          unsolicited_grant_size:   { type: int }
+          nominal_grant_interval:   { type: int }
+          tolerated_grant_jitter:   { type: int }
+          grants_per_interval:      { type: int }
+          dscp_overwrite:           { type: int }
+          application_id:           { type: int }
+          active_timeout:           { type: int }
+          admitted_timeout:         { type: int }
+          tos_and_mask:             { type: str }
+          tos_or_mask:              { type: str }
+          request_policy:           { type: str }
+          required_attribute_mask:  { type: str }
+          forbidden_attribute_mask: { type: str }
+          aqm_enable:               { type: bool }
