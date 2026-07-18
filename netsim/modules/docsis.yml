@@ -650,7 +650,15 @@ attributes:
               mac_address:       { type: str }
               node_type:         { type: str }   # references an rphy node-type name
               node_description:  { type: str }
-              core_resource_set: { type: int }
+              core_resource_set:  { type: int }
+              auxiliary_core_list: { type: int }   # references a global auxiliary-core-list
+              oob_551:                             # OOB 55-1 per-RPD (virtual-arpd-port | virtual-om)
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    type: { type: str, _required: True }   # virtual-arpd-port | virtual-om
+                    ref:  { type: str, _required: True }    # s/p/c or s/p
               cin:
                 type: list
                 _subtype:
@@ -833,3 +841,31 @@ attributes:
               kind: { type: str, _required: True }   # cgige | xgige
               port: { type: str, _required: True }   # slot/port
               cin:  { type: int, _required: True }    # 1-4
+        preamble_patterns:                 # `rphy preamble-pattern <1-64>` — US burst-receiver template
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:                      { type: int, _required: True }
+              vendor_id:               { type: int }
+              model_number:            { type: str }
+              driver_version:          { type: str }
+              preamble_len:            { type: int }
+              preamble_string:         { type: str }
+              extended_preamble_string: { type: str }
+        auxiliary_core_lists:              # `auxiliary-core-list <1-16>` — R-PHY multi-core support
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              cores:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    address: { type: str, _required: True }
+                    ipv6:    { type: bool }
+              alloc_aux_core_table:  { type: bool }
+              permit_aux_self_config: { type: bool }
+              resource_alloc_check:  { type: bool }
