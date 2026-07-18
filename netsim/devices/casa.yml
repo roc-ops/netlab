@@ -42,3 +42,27 @@ features:
     # OSPFv3 = `router ospf6` + interface `ipv6 router ospf <pid> area`. Rendered: network_type,
     # cost, priority, bfd, passive, router_id. (timers/password/import/areas = follow-up in #64.)
     priority: true
+  isis:
+    # Casa NSI Ch.10. router isis <tag>/net/is-type/metric-style wide; interface
+    # ip|ipv6 router isis, isis network point-to-point, metric, circuit-type, bfd.
+    # CASA: is-type/circuit-type use `level-2-only`. (import/auth = follow-up.)
+    circuit_type: true
+  bgp:
+    # Casa NSI Ch.3. router bgp/bgp router-id; neighbor remote-as/description/
+    # update-source/next-hop-self; address-family {ipv4|ipv6} unicast; network (CIDR).
+    # (import/redistribute, peer-groups, route-maps = follow-up in #64.)
+    activate_af: true
+    advertise: true
+  vrf:
+    # Casa NSI Ch.35. ip vrf <name>/rd/route-target; interface ip vrf forwarding <name>.
+    # Routing inside VRFs (ospf/bgp per-VRF) = follow-up in #64.
+    ospfv2: false
+    ospfv3: false
+    bgp: false
+  routing:
+    # Casa NSI Ch.31/13 static routes (ip route / ipv6 route, CIDR, null0, gw-vrf/global).
+    # route-maps/prefix-lists/as-path/community (Casa Ch.28) = follow-up in #64.
+    static:
+      vrf: true          # ip route vrf <name>
+      inter_vrf: true    # gw-vrf <name> / global (leak)
+      discard: true      # null0 black-hole
