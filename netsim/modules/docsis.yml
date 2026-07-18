@@ -213,3 +213,62 @@ attributes:
                     ip_tos_low:             { type: int }
                     ip_tos_high:            { type: int }
                     ip_tos_mask:            { type: int }
+    # BPI+/security (node-scoped) — `cable sec ...`. The most sensitive layer. Guardrail: box-wide
+    # singletons (encrypt-alg/cert-revocation/sav-auth/config-file-learning/tftp-options) may be
+    # ADDED only if not set — never overwritten; sav-config-lists (by name) + eae-exclusions (by id)
+    # are additive. Fields are the CableLabs docs-security leaves (mapped to Casa by render_security).
+    security:
+      type: dict
+      _keys:
+        sav_config_list:                     # source-address-verification lists
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              sav_config_list_name: { type: str, _required: True }
+              sav_rule:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    rule_id:        { type: int, _required: True }
+                    prefix_address: { type: str, _required: True }
+        cmts_sav_control:
+          type: dict
+          _keys:
+            cm_authentication_enable: { type: bool }
+        cmts_server_config:
+          type: dict
+          _keys:
+            config_file_learning_enabled: { type: bool }
+            tftp_options:                 { type: str }
+        cmts_encrypt:
+          type: dict
+          _keys:
+            encrypt_alg_priority: { type: list, _subtype: { type: str } }
+        cmts_certificate:
+          type: dict
+          _keys:
+            cert_revocation_method: { type: str }
+        cmts_cert_revocation_list:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              url:              { type: str, _required: True }
+              refresh_interval: { type: int }
+        cmts_online_cert_status_protocol:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              url:              { type: str, _required: True }
+              signature_bypass: { type: bool }
+        cmts_cm_eae_exclusion:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              cmts_cm_eae_exclusion_id: { type: int, _required: True }
+              mac_address:              { type: str, _required: True }
+              mac_address_mask:         { type: str }
