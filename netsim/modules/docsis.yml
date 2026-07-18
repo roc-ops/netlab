@@ -82,6 +82,41 @@ attributes:
                     pre_equalization:  { type: bool }
                     regular_guardband: { type: bool }
                     up_down_trap:      { type: bool }
+          # Per-MAC-domain IGMP/MLD proxy (mgmd) + ssm-map, rendered INSIDE interface docsis-mac.
+          # (Guarded by the docsis-mac domain check — no separate protection.)
+          mgmd:
+            type: dict
+            _keys:
+              ipv4:
+                type: dict
+                _keys:
+                  version:                    { type: int }   # 1-3 (IGMP)
+                  strict:                     { type: bool }
+                  query_interval:             { type: int }
+                  robustness:                 { type: int }
+                  max_query_response_time:    { type: int }
+                  last_member_query_interval: { type: int }
+                  enable:                     { type: bool }  # true -> `no mgmd ipv4 shutdown`
+              ipv6:
+                type: dict
+                _keys:
+                  version:                    { type: int }   # 1-2 (MLD)
+                  strict:                     { type: bool }
+                  query_interval:             { type: int }
+                  robustness:                 { type: int }
+                  max_query_response_time:    { type: int }
+                  last_member_query_interval: { type: int }
+                  enable:                     { type: bool }
+          ssm_map:                       # `multicast [vrf <v>] ssm-map <grp> access-list <name> [priority <n>]`
+            type: list
+            _subtype:
+              type: dict
+              _keys:
+                group:       { type: str, _required: True }
+                ipv6:        { type: bool }
+                access_list: { type: str, _required: True }
+                priority:    { type: int }
+                vrf:         { type: str }
     # Global reusable profiles (node-scoped) — referenced BY INDEX from the channels above,
     # so a plan is self-contained instead of assuming pre-provisioned indices. Rendered once,
     # before the domains, and guardrailed (a profile may be DEFINED only on a free index).
