@@ -75,3 +75,7 @@ features:
     # RIPng interface-attach is undocumented in the NSI ref -> IPv6 RIP intentionally unsupported.
     ipv4: true
     passive: true
+  docsis:
+    # DOCSIS access-side custom module (RocContLab #48). netlab plans MAC domains onto this
+    # node; the render/casa bridge renders them via the guardrailed casa_render (external).
+    mac_domains: true

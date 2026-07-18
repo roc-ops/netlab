@@ -1,0 +1,52 @@
+---
+# Custom DOCSIS access-side configuration module (RocContLab #48, hybrid-lab #57 Layer 2).
+#
+# Vendor-neutral MAC-domain data model — the CORE subset of ccap-docsis31.v1.yaml that the
+# guardrailed renderer (vendor-docs/.../render/casa/casa_render.py) consumes today: MAC domain
+# + DS SC-QAM channel set + US SC-QAM physical/logical channels + CM service group + diplexer
+# band edges. netlab PLANS this onto a CMTS node and validates it; it NEVER deploys it (the
+# CMTS is an `unmanaged`/external node). The render/casa bridge reads nodes.<node>.docsis and
+# feeds each MAC domain to casa_render -> guardrail -> Casa CLI.
+#
+# v1 scope note: mirrors the proven casa_render `mac-domain` spec (apply direction). OFDM/OFDMA
+# channels, reusable profiles, service flows / QoS service-classes, subscriber-mgmt, multicast,
+# DSG, BPI expand later (issue #48 / #65) as the renderer grows. Attribute names are the
+# underscore form of the data-model's hyphenated leaves; the bridge maps back on render.
+
+attributes:
+  node:
+    mac_domains:
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          domain_id:        { type: int, _required: True }
+          ip_bundle_ref:    { type: str, _required: True }
+          cm_service_group: { type: str, _required: True }
+          diplexer:
+            type: dict
+            _keys:
+              upstream_upper_band_edge_mhz:   { type: int }
+              downstream_lower_band_edge_mhz: { type: int }
+              downstream_upper_band_edge_mhz: { type: int }
+          downstream:
+            type: dict
+            _keys:
+              port:       { type: str, _required: True }
+              interleave: { type: str }
+              channels:
+                type: dict
+                _keys:
+                  start_hz: { type: int }
+                  count:    { type: int }
+                  step_hz:  { type: int }
+          upstream:
+            type: dict
+            _keys:
+              port:              { type: str, _required: True }
+              physical_channels: { type: list, _subtype: { type: int } }
+              width_hz:          { type: int }
+              start_hz:          { type: int }
+              step_hz:           { type: int }
+              logical_channel:   { type: int }
+              minislot:          { type: int }
