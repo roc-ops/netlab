@@ -82,3 +82,50 @@ attributes:
                     pre_equalization:  { type: bool }
                     regular_guardband: { type: bool }
                     up_down_trap:      { type: bool }
+    # Global reusable profiles (node-scoped) — referenced BY INDEX from the channels above,
+    # so a plan is self-contained instead of assuming pre-provisioned indices. Rendered once,
+    # before the domains, and guardrailed (a profile may be DEFINED only on a free index).
+    ofdm_profiles:                       # DS OFDM modulation profiles (`ofdm profile <1-640>`)
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          index:              { type: int, _required: True }
+          profile_modulation: { type: str }
+          subcarrier_groups:
+            type: list
+            _subtype:
+              type: dict
+              _keys:
+                group:           { type: int, _required: True }
+                lower_freq_hz:   { type: int }
+                upper_freq_hz:   { type: int }
+                modulation:      { type: str }
+                skip_modulation: { type: str }
+    ofdma_iuc_profiles:                  # US OFDMA IUC profiles (`ofdma iuc-profile <1-64>`)
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          index: { type: int, _required: True }
+          data_iucs:
+            type: list
+            _subtype:
+              type: dict
+              _keys:
+                iuc:           { type: int, _required: True }
+                modulation:    { type: str, _required: True }
+                pilot_pattern: { type: int, _required: True }
+                minislot_cfg:  { type: int }
+          fine_ranging_iuc:
+            type: dict
+            _keys:
+              symbols: { type: int }
+              cycle:   { type: int }
+              offset:  { type: int }
+          initial_ranging_iuc:
+            type: dict
+            _keys:
+              symbols: { type: int }
+              cycle:   { type: int }
+              offset:  { type: int }
