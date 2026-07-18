@@ -786,3 +786,50 @@ attributes:
                 _keys:
                   address: { type: str, _required: True }
                   ipv6:    { type: bool }
+        core_resource_sets:                # `core-resource-set <1-64>` — DS/US channel-range split
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              ds_port_ranges:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    start: { type: int, _required: True }
+                    end:   { type: int, _required: True }
+                    channel_ranges:
+                      type: list
+                      _subtype:
+                        type: dict
+                        _keys:
+                          id:        { type: int, _required: True }
+                          type:      { type: str, _required: True }   # qam | ofdm | oob-ndf
+                          start:     { type: int, _required: True }
+                          end:       { type: int, _required: True }
+                          qualifier: { type: str }   # (qam) docsis | broadcast-video | narrowcast-video
+              us_port_ranges:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    start: { type: int, _required: True }
+                    end:   { type: int, _required: True }
+                    channel_ranges:
+                      type: list
+                      _subtype:
+                        type: dict
+                        _keys:
+                          id:    { type: int, _required: True }
+                          type:  { type: str, _required: True }   # ofdma | oob-ndr | upstream
+                          start: { type: int, _required: True }
+                          end:   { type: int, _required: True }
+        port_cin_bindings:                 # bind a physical CSC port to a CIN (reachability-critical)
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              kind: { type: str, _required: True }   # cgige | xgige
+              port: { type: str, _required: True }   # slot/port
+              cin:  { type: int, _required: True }    # 1-4
