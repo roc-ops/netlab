@@ -607,3 +607,75 @@ attributes:
                     indcd:            { type: bool }
                     indcd_port_start: { type: int }
                     indcd_port_end:   { type: int }
+    # Remote PHY (node-scoped) — `rphy node-type` RPD profiles + `remote-phy-node` RPD instances.
+    # Guardrail: a plan DEFINEs a new node-type (free name) / RPD (free id), never redefines an
+    # existing one. (R-DTI/PTP timing, CIN, ccap-core, core-resource-set = documented follow-up.)
+    rphy:
+      type: dict
+      _keys:
+        node_types:                      # `rphy node-type <name>` capability profiles
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              name:                  { type: str, _required: True }
+              vendor_name:           { type: str }
+              vendor_id:             { type: int }
+              model_number:          { type: str }
+              qam_ports:             { type: int }
+              qam_channels:          { type: int }
+              ofdm_channels:         { type: int }
+              ofdma_channels:        { type: int }
+              upstream_ports:        { type: int }
+              upstream_channels:     { type: int }
+              upstream_log_channels: { type: int }
+              xgige_ports:           { type: int }
+              ptp_ports:             { type: int }
+              oob_ndf_channels:      { type: int }
+              oob_ndr_channels:      { type: int }
+              oob_ndr_aggregation:   { type: bool }
+              pnm_sac_engines:       { type: int }
+              dual_leakage_tones:    { type: int }
+              single_leakage_tones:  { type: int }
+              preamble_pattern:      { type: int }
+              rfm_ds_gain_functions: { type: int }
+              rfm_ds_tilt_functions: { type: int }
+              rfm_us_gain_functions: { type: int }
+        rpds:                            # `remote-phy-node <id>` RPD instances
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:                { type: int, _required: True }   # 1-320
+              mac_address:       { type: str }
+              node_type:         { type: str }   # references an rphy node-type name
+              node_description:  { type: str }
+              core_resource_set: { type: int }
+              cin:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    id:    { type: int, _required: True }   # cin 1-4
+                    xgige: { type: str }                    # slot/port
+              broadcast_qam:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    id:            { type: int, _required: True }
+                    start_channel: { type: int, _required: True }
+              video_qam:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    id:            { type: int, _required: True }
+                    start_channel: { type: int, _required: True }
+              rfm_ds_power_gain:     { type: list, _subtype: { type: int } }
+              rfm_us_power_gain:     { type: list, _subtype: { type: int } }
+              rfm_ds_tilt:           { type: list, _subtype: { type: int } }
+              reverse_port_shutdown: { type: list, _subtype: { type: int } }
+              frx_enable:            { type: bool }
+              lci_enable:            { type: int }   # optional power (tenth dBmV)
+              enable:                { type: bool }  # node admin state (no shutdown)
