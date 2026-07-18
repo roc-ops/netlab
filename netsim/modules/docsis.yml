@@ -679,3 +679,110 @@ attributes:
               frx_enable:            { type: bool }
               lci_enable:            { type: int }   # optional power (tenth dBmV)
               enable:                { type: bool }  # node admin state (no shutdown)
+              ptp_ports:                       # RPD's PTP slave port(s), nested in the RPD
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    port:   { type: str, _required: True }   # [node:]slot/eth.ptp
+                    enable: { type: bool }
+                    docsis_timing:
+                      type: dict
+                      _keys:
+                        id:   { type: int, _required: True }
+                        role: { type: str, _required: True }   # ptp-master | ptp-slave
+        # R-DTI / CIN / ccap-core timing + core reachability (SAFETY-SENSITIVE): CINs carry live
+        # reachability; `ccap-core function` resets the node. Guardrail: timing objects additive,
+        # ccap-core singletons ADD-only.
+        ccap_core:
+          type: dict
+          _keys:
+            function:               { type: str }   # principal|auxiliary|... — RESETS the node
+            core_id_string:         { type: str }
+            gcp_loopback:           { type: int }
+            gcp_dscp:               { type: int }
+            video_operational_mode: { type: str }
+        docsis_timing:                     # R-DTI profiles — `interface docsis-timing <1-4>`
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:                          { type: int, _required: True }
+              clock_source:
+                type: dict
+                _keys:
+                  address: { type: str, _required: True }
+                  ipv6:    { type: bool }
+              alternate_clock_source:
+                type: dict
+                _keys:
+                  address: { type: str, _required: True }
+                  ipv6:    { type: bool }
+              ds_priority:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    level: { type: int, _required: True }   # 1 (master prio) | 2 (slave prio)
+                    value: { type: int, _required: True }
+              ds_domain:                   { type: int }
+              def_local_priority:          { type: int }
+              ds_announce_interval:        { type: int }
+              ds_announce_receipt_timeout: { type: int }
+              ds_sync_interval:            { type: int }
+              ds_delay_req_interval:       { type: int }
+              profile_identifier:          { type: str }
+              profile_version:             { type: str }
+              transport_type:              { type: str }
+              transport_dscp:              { type: int }
+              transport_cos:               { type: int }
+              unicast_contract_duration:   { type: int }
+              include_correction_field:    { type: bool }
+        cin:                               # CIN interfaces — `interface cin <1-4> {p2p|switched}`
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:             { type: int, _required: True }   # 1-4
+              mode:           { type: str, _required: True }   # point-to-point | switched
+              ipv4_address:   { type: str }
+              ipv4_mask:      { type: str }
+              ipv6_address:   { type: str }
+              vrf_forwarding: { type: str }
+              ip_prov_mode:   { type: str }
+              helper_address:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    address: { type: str, _required: True }
+                    ipv6:    { type: bool }
+              port_address_range:
+                type: dict
+                _keys:
+                  start: { type: str, _required: True }
+                  end:   { type: str, _required: True }
+                  ipv6:  { type: bool }
+              docsis_timing:
+                type: dict
+                _keys:
+                  id:   { type: int, _required: True }
+                  role: { type: str, _required: True }
+              mtu:            { type: int }
+        ptp_ports:                         # CSC-side PTP ports — `interface ptp-port <port>`
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              port:   { type: str, _required: True }
+              enable: { type: bool }
+              docsis_timing:
+                type: dict
+                _keys:
+                  id:   { type: int, _required: True }
+                  role: { type: str, _required: True }
+              clock_source:
+                type: dict
+                _keys:
+                  address: { type: str, _required: True }
+                  ipv6:    { type: bool }
