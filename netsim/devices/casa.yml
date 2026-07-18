@@ -66,3 +66,12 @@ features:
       vrf: true          # ip route vrf <name>
       inter_vrf: true    # gw-vrf <name> / global (leak)
       discard: true      # null0 black-hole
+  mpls:
+    # Casa NSI Ch.15. `mpls ip` (global+interface) + `router ldp` (router-id/transport-address)
+    # + interface `enable-ldp ipv4`. LDP only — Casa NSI has no BGP-LU/6PE. (vpn/te = follow-up.)
+    ldp: true
+  ripv2:
+    # Casa NSI Ch.29. IPv4 RIPv2 via `router rip`/`version 2`/`network` statements + passive.
+    # RIPng interface-attach is undocumented in the NSI ref -> IPv6 RIP intentionally unsupported.
+    ipv4: true
+    passive: true
