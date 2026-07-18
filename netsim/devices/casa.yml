@@ -1,0 +1,40 @@
+---
+# Casa Systems CMTS (integrated CCAP chassis, e.g. C100G) — EXTERNAL-provider device (RocContLab #48).
+#
+# CMTS "big iron" is not virtualizable (real chassis; R-PHY cores too large for containers), so this
+# device is external-only: netlab generates the addressing plan + config artifact but never deploys it
+# (provider: external — https://netlab.tools/labs/external/). Drop a `casa` node with
+# `provider: external` into any topology to configure the physical CMTS alongside virtual (clab) NOS
+# nodes from ONE netlab YAML.
+#
+# NETWORK-SIDE (NSI) config = standard router/switch, driven by netlab existing modules + rendered to
+# Casa NSI CLI (grounded in wiki/okf/casa-8.8/nsi-config-cmd-ref) — RocContLab #53.
+# DOCSIS access-side = the custom `docsis` module (RocContLab data model + casa_render) — #48.
+# Contribution ledger: RocContLab docs/netlab-fork.md.
+
+description: Casa Systems CMTS (external / hardware-only)
+
+interface_name: gige 1/{ifindex}         # Casa `interface gige <slot>/<port>` (placeholder slot;
+                                          # for real HW set per-link `ifname`, or refine in #53)
+loopback_interface_name: loopback {ifindex}
+mgmt_if: eth 6/0                          # Casa FastEthernet mgmt port `interface eth <slot>/<port>`
+
+clab:
+  image: none                            # placeholder image — CMTS is `unmanaged` (never deployed by netlab)
+libvirt:
+  image: none
+external:
+  image: none                            # external config-gen mode (later phase)                            # external only — not deployable
+
+group_vars:
+  ansible_network_os: casa               # selects the netsim/ansible/templates/*/casa.j2 render path
+  ansible_connection: network_cli        # Casa CLI over SSH (used ONLY if pushing to real HW)
+  netlab_device_type: casa
+
+features:
+  initial:
+    ipv4: True
+    ipv6: True
+  # Network-side modules (ospf/bgp/isis/vrf/vlan/mpls/lag/gateway...) get declared here as their
+  # Casa NSI render templates land in #53; the DOCSIS access-side custom `docsis` module in #48.
+  # Kept minimal now so the scaffold transforms cleanly.

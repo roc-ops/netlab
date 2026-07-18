@@ -1,0 +1,32 @@
+{#
+  Casa CMTS initial config (RocContLab #48). IOS-like: hostname + per-interface addressing.
+  External device — renders the config artifact; netlab does not deploy it.
+  Casa CLI: `interface gige <slot>/<port>` / `interface loopback <n>`;
+  IPv4 = dotted netmask (`ip address <ip> <mask>`), IPv6 = CIDR (`ipv6 address <addr>/<len>`).
+#}
+hostname {{ inventory_hostname.replace("_","-") }}
+!
+{% for l in netlab_interfaces %}
+interface {{ l.ifname }}
+{% if l.name is defined %}
+  description {{ l.name }}{{ " ["+l.role+"]" if l.role is defined else "" }}
+{% endif %}
+{% if "ipv4" in l and l.ipv4 is string %}
+  ip address {{ l.ipv4|ansible.utils.ipaddr("address") }} {{ l.ipv4|ansible.utils.ipaddr("netmask") }}
+{% endif %}
+{% if "ipv6" in l and l.ipv6 is string %}
+  ipv6 address {{ l.ipv6 }}
+{% endif %}
+  no shutdown
+!
+{% endfor %}
+{% if loopback is defined %}
+interface {{ loopback.ifname }}
+{% if "ipv4" in loopback %}
+  ip address {{ loopback.ipv4|ansible.utils.ipaddr("address") }} {{ loopback.ipv4|ansible.utils.ipaddr("netmask") }}
+{% endif %}
+{% if "ipv6" in loopback %}
+  ipv6 address {{ loopback.ipv6 }}
+{% endif %}
+!
+{% endif %}
