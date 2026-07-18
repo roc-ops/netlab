@@ -40,6 +40,22 @@ attributes:
                   start_hz: { type: int }
                   count:    { type: int }
                   step_hz:  { type: int }
+              ofdm:                      # DS OFDM channels (DOCSIS 3.1) on the same qam port
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    channel:            { type: int, _required: True }   # ofdm-channel index 0..3
+                    lower_freq_hz:      { type: int, _required: True }
+                    upper_freq_hz:      { type: int, _required: True }
+                    plc_freq_hz:        { type: int, _required: True }
+                    profiles:           { type: list, _subtype: { type: int } }  # global ofdm-profile idx per slot
+                    cyclic_prefix:      { type: int }
+                    rolloff_period:     { type: int }
+                    sc_spacing:         { type: int }
+                    interleave:         { type: int }
+                    pilot_scale_factor: { type: int }
+                    up_down_trap:       { type: bool }
           upstream:
             type: dict
             _keys:
@@ -50,3 +66,19 @@ attributes:
               step_hz:           { type: int }
               logical_channel:   { type: int }
               minislot:          { type: int }
+              ofdma:                     # US OFDMA channels (DOCSIS 3.1); Casa supports channel 0 only
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    channel:           { type: int, _required: True }   # ofdma channel index (0)
+                    lower_freq_hz:     { type: int, _required: True }
+                    upper_freq_hz:     { type: int, _required: True }
+                    iuc_profile:       { type: int }    # global ofdma iuc-profile idx
+                    cyclic_prefix:     { type: int }
+                    sc_spacing:        { type: int }
+                    symbols_per_frame: { type: int }
+                    rolloff_period:    { type: int }
+                    pre_equalization:  { type: bool }
+                    regular_guardband: { type: bool }
+                    up_down_trap:      { type: bool }
