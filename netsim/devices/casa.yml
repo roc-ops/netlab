@@ -31,6 +31,19 @@ group_vars:
   ansible_connection: network_cli        # Casa CLI over SSH (used ONLY if pushing to real HW)
   netlab_device_type: casa
 
+# DEVICE-SCOPED NSI interface attributes (RocContLab #53). Casa-specific interface knobs the core
+# `initial` model doesn't carry — declared under the device so they validate ONLY on casa nodes
+# (never pollute the shared/portable model) and render via initial/casa.j2. Preferred over verbatim
+# configlets: proprietary config becomes validated structured data. (Reverse-mapped from a real
+# chassis by render/casa/net_yaml.py; the round-trip is semantic, not byte-for-byte.)
+attributes:
+  interface:
+    encapsulation:  str                  # `encapsulation dot1q` on a vlan sub-interface
+    parent:         str                  # vlan parent physical port, e.g. "xgige 2/0"
+    mac_address:    str                  # static `mac address <addr>`
+    pim:            bool                  # IPv4 `ip pim sparse-mode` enabled on the interface
+    secondary_ipv4: { type: list, _subtype: { type: ipv4, use: subnet } }   # `ip address ... secondary`
+
 features:
   initial:
     ipv4: True
