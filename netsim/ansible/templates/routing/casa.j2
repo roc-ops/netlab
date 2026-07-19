@@ -38,3 +38,22 @@ ipv6 route {{ vrf }}{{ sr.ipv6 }} {{ nh6 }}{{ leak6 }}
 {{ fam }} prefix-list {{ name }} seq {{ e.sequence }} {{ e.action|default('permit') }} {{ pfx }}{{ ' ge '+ge|string if ge is not none else '' }}{{ ' le '+le|string if le is not none else '' }}
 {%   endfor %}
 {% endfor %}
+{# ---- route-maps (device-scoped casa_route_maps). Casa NSI Ch.28 ---- #}
+{% for e in casa_route_maps|default([]) %}
+route-map {{ e.name }} {{ e.action|default('permit') }} {{ e.sequence }}
+{%   if e.description is defined %}
+  description "{{ e.description }}"
+{%   endif %}
+{%   if e.match_prefix is defined %}
+  match ip address prefix-list {{ e.match_prefix }}
+{%   endif %}
+{%   if e.set_locpref is defined %}
+  set local-preference {{ e.set_locpref }}
+{%   endif %}
+{%   if e.set_community is defined %}
+  set community {{ e.set_community|join(' ') }}
+{%   endif %}
+{%   if e.set_origin is defined %}
+  set origin {{ e.set_origin }}
+{%   endif %}
+{% endfor %}

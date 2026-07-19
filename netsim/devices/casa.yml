@@ -88,6 +88,22 @@ attributes:
         networks: { type: list, _subtype: { type: ipv4, use: subnet } }   # AF `network <p> mask <m>`
         log_neighbor_changes: bool
         always_compare_med:   bool
+    # Route-maps (Casa NSI Ch.28). netlab routing.policy carries match.prefix/set.locpref/
+    # set.community but NOT set.origin or per-entry description, so — like the BGP external peers —
+    # route-maps ride a complete device-scoped node attribute. (prefix-lists still use routing.prefix.)
+    casa_route_maps:
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          name:          { type: str, _required: True }
+          sequence:      int
+          action:        str
+          description:   str
+          match_prefix:  str
+          set_locpref:   int
+          set_community: { type: list, _subtype: { type: str } }
+          set_origin:    str
 
 features:
   initial:
