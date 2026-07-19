@@ -34,12 +34,21 @@ attributes:
             _keys:
               port:       { type: str, _required: True }
               interleave: { type: str }
-              channels:
+              channels:                  # generator: N contiguous channels, uniform spacing (common case)
                 type: dict
                 _keys:
                   start_hz: { type: int }
                   count:    { type: int }
                   step_hz:  { type: int }
+              channel_list:              # explicit per-channel — for NON-UNIFORM DS frequencies (a TV
+                type: list               # channel / interference occupying a slot). Overrides `channels`.
+                _subtype:
+                  type: dict
+                  _keys:
+                    channel:      { type: int, _required: True }   # channel index on the port
+                    frequency_hz: { type: int, _required: True }
+                    modulation:   { type: str }
+                    interleave:   { type: str }
               ofdm:                      # DS OFDM channels (DOCSIS 3.1) on the same qam port
                 type: list
                 _subtype:
@@ -70,12 +79,23 @@ attributes:
             type: dict
             _keys:
               port:              { type: str, _required: True }
+              # generator (uniform): N channels, one width, evenly spaced (common case).
               physical_channels: { type: list, _subtype: { type: int } }
               width_hz:          { type: int }
               start_hz:          { type: int }
               step_hz:           { type: int }
               logical_channel:   { type: int }
               minislot:          { type: int }
+              channel_list:              # explicit per-channel — for NON-UNIFORM US freqs AND MIXED
+                type: list               # widths (e.g. one 3.2 MHz + three 6.4 MHz). Overrides the generator.
+                _subtype:
+                  type: dict
+                  _keys:
+                    physical_channel: { type: int, _required: True }
+                    frequency_hz:     { type: int, _required: True }
+                    width_hz:         { type: int, _required: True }
+                    logical_channel:  { type: int }
+                    minislot:         { type: int }
               ofdma:                     # US OFDMA channels (DOCSIS 3.1); Casa supports channel 0 only
                 type: list
                 _subtype:
