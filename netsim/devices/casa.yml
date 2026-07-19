@@ -104,6 +104,18 @@ attributes:
           set_locpref:   int
           set_community: { type: list, _subtype: { type: str } }
           set_origin:    str
+    # Static routes. netlab routing.static carries prefix/nexthop/discard but NOT the Casa admin
+    # distance or per-route description (distance = route preference, matters), so device-scoped.
+    casa_static_routes:
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          prefix:      { type: str, _required: True }
+          nexthop:     { type: str, _required: True }
+          distance:    int
+          description: str
+          vrf:         str
 
 features:
   initial:

@@ -57,3 +57,7 @@ route-map {{ e.name }} {{ e.action|default('permit') }} {{ e.sequence }}
   set origin {{ e.set_origin }}
 {%   endif %}
 {% endfor %}
+{# ---- static routes (device-scoped casa_static_routes) ---- #}
+{% for r in casa_static_routes|default([]) %}
+ip route {{ 'vrf '+r.vrf+' ' if r.vrf is defined else '' }}{{ r.prefix }} {{ r.nexthop }}{{ ' '+r.distance|string if r.distance is defined else '' }}{{ ' description "'+r.description+'"' if r.description is defined else '' }}
+{% endfor %}
