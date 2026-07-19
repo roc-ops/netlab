@@ -49,6 +49,7 @@ attributes:
                     frequency_hz: { type: int, _required: True }
                     modulation:   { type: str }
                     interleave:   { type: str }
+                    shutdown:     { type: bool }   # defined-but-disabled channel (freq 0); default active
               ofdm:                      # DS OFDM channels (DOCSIS 3.1) on the same qam port
                 type: list
                 _subtype:
