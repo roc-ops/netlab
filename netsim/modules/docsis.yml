@@ -23,6 +23,11 @@ attributes:
           domain_id:        { type: int, _required: True }
           ip_bundle_ref:    { type: str, _required: True }
           cm_service_group: { type: str, _required: True }
+          # Round-trip fidelity: verbatim per-domain scalar blocks around the channel binds — `pre`
+          # BEFORE the US binds (description/sync/insertion/ucd/sid-cluster/...), `post` AFTER the DS
+          # binds (mgmd/privacy/cm-status/diplexer/...). Omit for the generated forward path.
+          pre:  { type: list, _subtype: { type: str } }
+          post: { type: list, _subtype: { type: str } }
           diplexer:
             type: dict
             _keys:
@@ -76,10 +81,17 @@ attributes:
                   timer_id:        { type: int }
                   vendor_param_id: { type: int }
                   channel_list:    { type: int }
+              bindings:                  # explicit DS binds (round-trip fidelity: exact indices +
+                type: list               # the `secondary` qualifier). Else generated from the plan.
+                _subtype:
+                  type: dict
+                  _keys:
+                    index: { type: int, _required: True }
+                    text:  { type: str, _required: True }   # e.g. "qam 0/0/0" or "ofdm 0/0/0 secondary"
           upstream:
             type: dict
             _keys:
-              port:              { type: str, _required: True }
+              port:              { type: str }   # single-port form; multi-port sets `ports` instead
               # generator (uniform): N channels, one width, evenly spaced (common case).
               physical_channels: { type: list, _subtype: { type: int } }
               width_hz:          { type: int }
@@ -113,6 +125,44 @@ attributes:
                     pre_equalization:  { type: bool }
                     regular_guardband: { type: bool }
                     up_down_trap:      { type: bool }
+              bindings:                  # explicit MAC-domain US binds (round-trip fidelity: exact
+                type: list               # indices incl. gaps, OFDMA interleaved). Else generated.
+                _subtype:
+                  type: dict
+                  _keys:
+                    index: { type: int, _required: True }
+                    text:  { type: str, _required: True }   # e.g. "upstream 0/0.0/0" or "ofdma 0/0.0"
+              ports:                     # MULTI-PORT upstream: a MAC domain binding US channels from
+                type: list               # several RF ports (e.g. 0/0 AND 0/1). Each mirrors the
+                _subtype:                # single-port generator/channel_list/ofdma form above.
+                  type: dict
+                  _keys:
+                    port:              { type: str, _required: True }
+                    physical_channels: { type: list, _subtype: { type: int } }
+                    width_hz:          { type: int }
+                    start_hz:          { type: int }
+                    step_hz:           { type: int }
+                    logical_channel:   { type: int }
+                    minislot:          { type: int }
+                    channel_list:
+                      type: list
+                      _subtype:
+                        type: dict
+                        _keys:
+                          physical_channel: { type: int, _required: True }
+                          frequency_hz:     { type: int, _required: True }
+                          width_hz:         { type: int, _required: True }
+                          logical_channel:  { type: int }
+                          minislot:         { type: int }
+                    ofdma:
+                      type: list
+                      _subtype:
+                        type: dict
+                        _keys:
+                          channel:       { type: int, _required: True }
+                          lower_freq_hz: { type: int, _required: True }
+                          upper_freq_hz: { type: int, _required: True }
+                          iuc_profile:   { type: int }
           # Per-MAC-domain IGMP/MLD proxy (mgmd) + ssm-map, rendered INSIDE interface docsis-mac.
           # (Guarded by the docsis-mac domain check — no separate protection.)
           mgmd:
