@@ -13,6 +13,21 @@ router bgp {{ bgp.as }}
 {% if bgp.router_id is defined %}
   bgp router-id {{ bgp.router_id }}
 {% endif %}
+{% if casa_bgp.log_neighbor_changes|default(False) %}
+  bgp log-neighbor-changes
+{% endif %}
+{% if casa_bgp.always_compare_med|default(False) %}
+  bgp always-compare-med
+{% endif %}
+{# ---- external/static peers (device-scoped `casa_bgp.ext_neighbors`): real routers, not lab
+       nodes, so netlab's topology-derived bgp.neighbors can't carry them ---- #}
+{% for n in casa_bgp.ext_neighbors|default([]) %}
+{%   set peer = n.ipv4|default(n.ipv6) %}
+  neighbor {{ peer }} remote-as {{ n.remote_as }}
+{%   if n.description is defined %}
+  neighbor {{ peer }} description "{{ n.description }}"
+{%   endif %}
+{% endfor %}
 {# ---- global neighbor config (one peer address per address family) ---- #}
 {% for n in bgp.neighbors %}
 {%   for af in ['ipv4','ipv6'] if n[af] is defined and n[af] is string %}

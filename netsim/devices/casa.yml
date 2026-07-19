@@ -43,6 +43,25 @@ attributes:
     mac_address:    str                  # static `mac address <addr>`
     pim:            bool                  # IPv4 `ip pim sparse-mode` enabled on the interface
     secondary_ipv4: { type: list, _subtype: { type: ipv4, use: subnet } }   # `ip address ... secondary`
+  node:
+    # External/static BGP peers (RocContLab #53): a CMTS peers with REAL routers (upstream ISPs,
+    # route reflectors), never lab nodes — so netlab's topology-derived `bgp.neighbors` cannot carry
+    # them. Device-scoped so it lives only on casa. Plus the Casa BGP process flags not in netlab's
+    # bgp model. Rendered by bgp/casa.j2. (Preferred over a verbatim configlet.)
+    casa_bgp:
+      type: dict
+      _keys:
+        ext_neighbors:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              ipv4:        { type: ipv4, use: address }
+              ipv6:        { type: ipv6, use: address }
+              remote_as:   { type: int, _required: True }
+              description: str
+        log_neighbor_changes: bool
+        always_compare_med:   bool
 
 features:
   initial:
