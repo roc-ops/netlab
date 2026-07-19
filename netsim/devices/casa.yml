@@ -119,6 +119,7 @@ features:
       vrf: true          # ip route vrf <name>
       inter_vrf: true    # gw-vrf <name> / global (leak)
       discard: true      # null0 black-hole
+    prefix: True         # ip/ipv6 prefix-list (routing.prefix) — RocContLab #53
   mpls:
     # Casa NSI Ch.15. `mpls ip` (global+interface) + `router ldp` (router-id/transport-address)
     # + interface `enable-ldp ipv4`. LDP only — Casa NSI has no BGP-LU/6PE. (vpn/te = follow-up.)
