@@ -43,6 +43,21 @@ attributes:
     mac_address:    str                  # static `mac address <addr>`
     pim:            bool                  # IPv4 `ip pim sparse-mode` enabled on the interface
     secondary_ipv4: { type: list, _subtype: { type: ipv4, use: subnet } }   # `ip address ... secondary`
+    # interface tail (RocContLab #53) — Casa-specific knobs with no netlab-core equivalent, modeled
+    # as device-scoped attributes rather than verbatim configlets.
+    mtu:                  int          # `mtu <n>`
+    mpls_mtu:             int          # `mpls mtu <n>`
+    tpid:                 str          # `tpid <hex>` (VLAN tag protocol id)
+    ip_access_group:      int          # `ip access-group <acl>`
+    ipv6_dad:             bool         # `ipv6 dad enable`
+    rate_limit_multicast: int          # `rate-limit multicast <n>`
+    isis_hello_padding:   bool         # per-if `isis hello padding`
+    isis_priority:        int          # per-if `isis priority <n>`
+    rsvp: { type: dict, _keys: { hello_interval: int, hello_timeout: int, keep_multiplier: int, refresh_time: int } }
+    l2vpn: { type: dict, _keys: { dhcp_insert_option: int, mac_address_interval: int } }   # Casa L2VPN
+    cable_helper_address:              # DOCSIS DHCP relay on the ip-bundle (per-scope helper IPs)
+      type: list
+      _subtype: { type: dict, _keys: { ip: { type: ipv4, use: address }, scope: str } }
   node:
     # External/static BGP peers (RocContLab #53): a CMTS peers with REAL routers (upstream ISPs,
     # route reflectors), never lab nodes — so netlab's topology-derived `bgp.neighbors` cannot carry

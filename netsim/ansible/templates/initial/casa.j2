@@ -1,10 +1,9 @@
 {#
-  Casa CMTS initial config (RocContLab #48/#53). IOS-like: hostname + per-interface addressing +
-  device-scoped NSI interface attributes (encapsulation / parent / secondary IPs / mac / pim —
-  declared in devices/casa.yml). External device — renders the config artifact; netlab does not
-  deploy it. Casa CLI: `interface gige <slot>/<port>` / `interface loopback <n>`; IPv4 = dotted
-  netmask, IPv6 = CIDR. netlab_interfaces = [loopback] + interfaces (loopback first); the mgmt
-  interface is NOT in this list (it lives in `mgmt`) so management reachability is never touched.
+  Casa CMTS initial config (RocContLab #48/#53). hostname + per-interface addressing + device-scoped
+  NSI interface attributes (encapsulation/parent/secondaries/mac/pim + tail: mtu/mpls-mtu/rsvp/tpid/
+  access-group/rate-limit/ipv6-dad/cable-helper — declared in devices/casa.yml). External device;
+  netlab renders the artifact, never deploys. IPv4 = dotted netmask, IPv6 = CIDR. netlab_interfaces =
+  [loopback] + interfaces (loopback first); mgmt is NOT in the list (lives in `mgmt`).
 #}
 hostname {{ inventory_hostname.replace("_","-") }}
 !
@@ -19,6 +18,9 @@ interface {{ l.ifname }}
 {% if l.parent is defined %}
   {{ l.parent }}
 {% endif %}
+{% if l.mtu is defined %}
+  mtu {{ l.mtu }}
+{% endif %}
 {% if "ipv4" in l and l.ipv4 is string %}
   ip address {{ l.ipv4|ansible.utils.ipaddr("address") }} {{ l.ipv4|ansible.utils.ipaddr("netmask") }}
 {% endif %}
@@ -28,11 +30,51 @@ interface {{ l.ifname }}
 {% if "ipv6" in l and l.ipv6 is string %}
   ipv6 address {{ l.ipv6 }}
 {% endif %}
+{% for h in l.cable_helper_address|default([]) %}
+  cable helper-address {{ h.ip }}{{ " "+h.scope if h.scope is defined else "" }}
+{% endfor %}
+{% if l.ip_access_group is defined %}
+  ip access-group {{ l.ip_access_group }}
+{% endif %}
+{% if l.mpls_mtu is defined %}
+  mpls mtu {{ l.mpls_mtu }}
+{% endif %}
+{% if l.rsvp is defined %}
+{%   if l.rsvp.hello_interval is defined %}
+  rsvp hello-interval {{ l.rsvp.hello_interval }}
+{%   endif %}
+{%   if l.rsvp.hello_timeout is defined %}
+  rsvp hello-timeout {{ l.rsvp.hello_timeout }}
+{%   endif %}
+{%   if l.rsvp.keep_multiplier is defined %}
+  rsvp keep-multiplier {{ l.rsvp.keep_multiplier }}
+{%   endif %}
+{%   if l.rsvp.refresh_time is defined %}
+  rsvp refresh-time {{ l.rsvp.refresh_time }}
+{%   endif %}
+{% endif %}
 {% if l.mac_address is defined %}
   mac address {{ l.mac_address }}
 {% endif %}
 {% if l.pim|default(False) %}
   ip pim sparse-mode
+{% endif %}
+{% if l.rate_limit_multicast is defined %}
+  rate-limit multicast {{ l.rate_limit_multicast }}
+{% endif %}
+{% if l.l2vpn is defined %}
+{%   if l.l2vpn.dhcp_insert_option is defined %}
+  no l2vpn dhcp-insert option {{ l.l2vpn.dhcp_insert_option }}
+{%   endif %}
+{%   if l.l2vpn.mac_address_interval is defined %}
+  l2vpn mac-address interval {{ l.l2vpn.mac_address_interval }}
+{%   endif %}
+{% endif %}
+{% if l.tpid is defined %}
+  tpid {{ l.tpid }}
+{% endif %}
+{% if l.ipv6_dad|default(False) %}
+  ipv6 dad enable
 {% endif %}
 {% if l.type != 'loopback' %}
   no shutdown

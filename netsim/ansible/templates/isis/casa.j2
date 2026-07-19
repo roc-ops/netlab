@@ -32,6 +32,12 @@ interface {{ l.ifname }}
 {%   if l.isis.bfd.ipv4|default(False) or l.isis.bfd.ipv6|default(False) %}
   isis bfd
 {%   endif %}
+{%   if l.isis_hello_padding|default(False) %}
+  isis hello padding
+{%   endif %}
+{%   if l.isis_priority is defined %}
+  isis priority {{ l.isis_priority }}
+{%   endif %}
 !
 {% endfor %}
 {# ---- process ---- #}
