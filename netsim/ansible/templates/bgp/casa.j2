@@ -54,4 +54,29 @@ router bgp {{ bgp.as }}
 {%   endfor %}
   exit-address-family
 {% endfor %}
+{# ---- IPv4 unicast AF for the device-scoped external peers: `network <p> mask <m>` +
+       per-neighbor activate / advertisement-interval / soft-reconfiguration / prefix-list ---- #}
+{% if casa_bgp.networks is defined or casa_bgp.ext_neighbors is defined %}
+!
+  address-family ipv4 unicast
+{% for n in casa_bgp.networks|default([]) %}
+  network {{ n|ansible.utils.ipaddr('address') }} mask {{ n|ansible.utils.ipaddr('netmask') }}
+{% endfor %}
+{% for nb in casa_bgp.ext_neighbors|default([]) if nb.ipv4 is defined %}
+  neighbor {{ nb.ipv4 }} activate
+{%   if nb.advertisement_interval is defined %}
+  neighbor {{ nb.ipv4 }} advertisement-interval {{ nb.advertisement_interval }}
+{%   endif %}
+{%   if nb.soft_reconfiguration_inbound|default(False) %}
+  neighbor {{ nb.ipv4 }} soft-reconfiguration inbound
+{%   endif %}
+{%   if nb.prefix_list_in is defined %}
+  neighbor {{ nb.ipv4 }} prefix-list {{ nb.prefix_list_in }} in
+{%   endif %}
+{%   if nb.prefix_list_out is defined %}
+  neighbor {{ nb.ipv4 }} prefix-list {{ nb.prefix_list_out }} out
+{%   endif %}
+{% endfor %}
+  exit-address-family
+{% endif %}
 !
