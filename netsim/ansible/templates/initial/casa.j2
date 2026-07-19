@@ -9,6 +9,9 @@ hostname {{ inventory_hostname.replace("_","-") }}
 !
 {% for l in netlab_interfaces %}
 interface {{ l.ifname }}
+{% for m in l.lag_members|default([]) %}
+  {{ m.port }} mode {{ m.mode }}
+{% endfor %}
 {% if l.name is defined %}
   description "{{ l.name }}{{ " ["+l.role+"]" if l.role is defined else "" }}"
 {% endif %}
@@ -59,6 +62,9 @@ interface {{ l.ifname }}
 {% if l.pim|default(False) %}
   ip pim sparse-mode
 {% endif %}
+{% if l.igmp|default(False) %}
+  ip igmp
+{% endif %}
 {% if l.rate_limit_multicast is defined %}
   rate-limit multicast {{ l.rate_limit_multicast }}
 {% endif %}
@@ -75,6 +81,9 @@ interface {{ l.ifname }}
 {% endif %}
 {% if l.ipv6_dad|default(False) %}
   ipv6 dad enable
+{% endif %}
+{% if l.fec|default(False) %}
+  fec
 {% endif %}
 {% if l.type != 'loopback' %}
   no shutdown

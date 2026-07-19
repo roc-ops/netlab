@@ -48,13 +48,19 @@ attributes:
     mtu:                  int          # `mtu <n>`
     mpls_mtu:             int          # `mpls mtu <n>`
     tpid:                 str          # `tpid <hex>` (VLAN tag protocol id)
-    ip_access_group:      int          # `ip access-group <acl>`
+    ip_access_group:      str          # `ip access-group <acl>` (numbered or named)
+    igmp:                 bool         # `ip igmp` (enable)
     ipv6_dad:             bool         # `ipv6 dad enable`
     rate_limit_multicast: int          # `rate-limit multicast <n>`
     isis_hello_padding:   bool         # per-if `isis hello padding`
     isis_priority:        int          # per-if `isis priority <n>`
     rsvp: { type: dict, _keys: { hello_interval: int, hello_timeout: int, keep_multiplier: int, refresh_time: int } }
     l2vpn: { type: dict, _keys: { dhcp_insert_option: int, mac_address_interval: int } }   # Casa L2VPN
+    # `interface trunk <n>` LAG members. netlab's lag module is LINK-based (LAG between two lab
+    # nodes); a CMTS trunk bundles local physical ports toward an EXTERNAL router, so — like the BGP
+    # external peers — the members ride a device-scoped attribute instead.
+    lag_members: { type: list, _subtype: { type: dict, _keys: { port: str, mode: str } } }
+    fec:            bool          # `fec` (forward error correction)
     cable_helper_address:              # DOCSIS DHCP relay on the ip-bundle (per-scope helper IPs)
       type: list
       _subtype: { type: dict, _keys: { ip: { type: ipv4, use: address }, scope: str } }
