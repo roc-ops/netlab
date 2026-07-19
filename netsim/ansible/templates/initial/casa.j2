@@ -90,3 +90,22 @@ interface {{ l.ifname }}
 {% endif %}
 !
 {% endfor %}
+{# ---- OSPF (device-scoped casa_ospf: process-level network statements + passive model). Rendered
+       here in the always-active initial template because netlab drops the interface-driven ospf
+       module when no interface uses OSPF (Casa joins via network statements, not per-interface). ---- #}
+{% if casa_ospf is defined %}
+router ospf {{ casa_ospf.process }}
+{%   if casa_ospf.router_id is defined %}
+  router-id {{ casa_ospf.router_id }}
+{%   endif %}
+{%   if casa_ospf.passive_default|default(False) %}
+  passive-interface default
+{%     for i in casa_ospf.passive_active|default([]) %}
+  no passive-interface {{ i }}
+{%     endfor %}
+{%   endif %}
+{%   for n in casa_ospf.networks|default([]) %}
+  network {{ n.prefix }} area {{ n.area }}
+{%   endfor %}
+!
+{% endif %}

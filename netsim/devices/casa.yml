@@ -116,6 +116,17 @@ attributes:
           distance:    int
           description: str
           vrf:         str
+    # OSPF process-level network statements + passive model (Casa OSPFv2 joins interfaces via
+    # `network <subnet> area` statements independent of current interfaces — not netlab's per-if OSPF).
+    # ospf.process/router_id use netlab's ospf module; the networks + passive ride device-scoped.
+    casa_ospf:
+      type: dict
+      _keys:
+        process:   { type: int, _required: True }
+        router_id: str
+        networks: { type: list, _subtype: { type: dict, _keys: { prefix: str, area: str } } }
+        passive_default: bool
+        passive_active:  { type: list, _subtype: { type: str } }
 
 features:
   initial:
