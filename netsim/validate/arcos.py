@@ -8,3 +8,4 @@
 from netsim.validate.ospf.arcos import *
 from netsim.validate.bgp.arcos import *
 from netsim.validate.isis.arcos import *
+from netsim.validate.routing.arcos import *

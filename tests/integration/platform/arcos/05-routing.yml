@@ -1,0 +1,50 @@
+# ArcOS static routing -- native docker-exec validation (confd_cli + '| display json'), no gNMI/SSH.
+# Same transport as OSPF/BGP/ISIS: devices/arcos.yml -> clab.group_vars.netlab_show_command runs
+#   printf 'show <path> | display json' | confd_cli -C -u admin  over ansible_connection: docker,
+# parsed by netsim/validate/routing/arcos.py (OpenConfig JSON).
+#
+# NOTE on the read-back path: this ArcOS virtual container image does not populate an OpenConfig
+# STATIC *operational-state* / RIB tree (the state container is empty and no afts/rib operational
+# path is exposed), so the check reads the committed route back over the running-config JSON -- the
+# SAME confd path used to deploy it. A present + complete static-route entry proves netlab rendered
+# it and the device accepted + committed it. Actual dataplane install was separately verified on
+# this image (kernel `ip route 10.0.0.2 via 10.1.0.2 dev swp1 proto static` + r1->r2 loopback ping
+# 0% loss); operational read-back is the documented virtual-image gap (see docs/caveats.md).
+message: |
+  ArcOS installs a global IPv4 static route to the peer loopback via the directly-connected r1-r2
+  link. Each node must have the static route committed (prefix + next-hop) on the device, read back
+  over docker-exec confd_cli running-config JSON (no SSH/NETCONF/gNMI on this build). Dataplane FIB
+  install + reachability is verified separately (see the header note / docs/caveats.md).
+
+defaults.device: arcos
+provider: clab
+plugin: [ multilab ]
+defaults.multilab.id: 42
+
+module: [ routing ]
+
+defaults.const.validate.static_wait: 30
+
+nodes:
+  r1:
+    routing.static:
+    - node: r2
+      nexthop.node: r2
+  r2:
+    routing.static:
+    - node: r1
+      nexthop.node: r1
+links: [ r1-r2 ]
+
+validate:
+  static_r1:
+    description: r1 has committed static route to r2 loopback (prefix + next-hop)
+    wait_msg: Waiting for the static route to commit
+    wait: static_wait
+    nodes: [ r1 ]
+    plugin: route_static(nodes.r2.loopback.ipv4)
+  static_r2:
+    description: r2 has committed static route to r1 loopback (prefix + next-hop)
+    wait: static_wait
+    nodes: [ r2 ]
+    plugin: route_static(nodes.r1.loopback.ipv4)
