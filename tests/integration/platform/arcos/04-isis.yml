@@ -1,0 +1,48 @@
+# ArcOS IS-IS -- native docker-exec validation (confd_cli + '| display json'), no gNMI/SSH.
+# Same transport as OSPF/BGP: devices/arcos.yml -> clab.group_vars.netlab_show_command runs
+#   printf 'show <path> | display json' | confd_cli -C -u admin  over ansible_connection: docker,
+# parsed by netsim/validate/isis/arcos.py (OpenConfig JSON).
+message: |
+  ArcOS runs IS-IS (level-2, point-to-point) on the r1-r2 link. Each node must form a UP IS-IS
+  adjacency with the other and install the peer loopback prefix into the IS-IS reachability,
+  read back over docker-exec confd_cli JSON (no SSH/NETCONF/gNMI on this build).
+
+defaults.device: arcos
+provider: clab
+plugin: [ multilab ]
+defaults.multilab.id: 42
+
+module: [ isis ]
+
+defaults.const.validate.isis_adj: 120
+defaults.const.validate.isis_spf: 30
+
+nodes: [ r1, r2 ]
+links:
+- r1:
+  r2:
+  isis.network_type: point-to-point
+
+validate:
+  adj_r1:
+    description: r1 has a UP IS-IS adjacency to r2
+    wait_msg: Waiting for the r1-r2 IS-IS adjacency
+    wait: isis_adj
+    nodes: [ r1 ]
+    plugin: isis_neighbor()
+  adj_r2:
+    description: r2 has a UP IS-IS adjacency to r1
+    wait: isis_spf
+    nodes: [ r2 ]
+    plugin: isis_neighbor()
+  pfx_r1:
+    description: r1 has r2 loopback in IS-IS reachability
+    wait: isis_spf
+    wait_msg: Waiting for IS-IS SPF
+    nodes: [ r1 ]
+    plugin: isis_prefix(nodes.r2.loopback.ipv4)
+  pfx_r2:
+    description: r2 has r1 loopback in IS-IS reachability
+    wait: isis_spf
+    nodes: [ r2 ]
+    plugin: isis_prefix(nodes.r1.loopback.ipv4)

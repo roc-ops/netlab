@@ -7,3 +7,4 @@
 # Each module's checks parse the returned OpenConfig JSON.
 from netsim.validate.ospf.arcos import *
 from netsim.validate.bgp.arcos import *
+from netsim.validate.isis.arcos import *
