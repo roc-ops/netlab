@@ -17,6 +17,7 @@ router isis {{ isis.instance | default('1') }}
  is-type {{ isis.type | default('level-2') }}
  net {{ isis.net }}
  metric-style wide
+ dynamic-hostname
 {% if isis.af.ipv6 is defined %}
  address-family ipv6 unicast
  exit-address-family
