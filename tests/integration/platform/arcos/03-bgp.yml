@@ -1,0 +1,49 @@
+# ArcOS eBGP -- native docker-exec validation (confd_cli + '| display json'), no gNMI/SSH.
+# Same transport as OSPF: devices/arcos.yml -> clab.group_vars.netlab_show_command runs
+#   printf 'show <path> | display json' | confd_cli -C -u admin  over ansible_connection: docker,
+# parsed by netsim/validate/bgp/arcos.py (OpenConfig JSON).
+message: |
+  ArcOS runs a 2-node eBGP session on the r1-r2 link (AS 65001 <-> AS 65002). Each node must
+  reach BGP session-state ESTABLISHED with the other and receive the peer loopback prefix,
+  read back over docker-exec confd_cli JSON (no SSH/NETCONF/gNMI on this build).
+
+defaults.device: arcos
+provider: clab
+plugin: [ multilab ]
+defaults.multilab.id: 42
+
+module: [ bgp ]
+
+defaults.const.validate.bgp_session: 120
+defaults.const.validate.bgp_prefix: 30
+
+nodes:
+  r1:
+    bgp.as: 65001
+  r2:
+    bgp.as: 65002
+links: [ r1-r2 ]
+
+validate:
+  session_r1:
+    description: r1 has an ESTABLISHED eBGP session to r2
+    wait_msg: Waiting for the r1->r2 BGP session
+    wait: bgp_session
+    nodes: [ r1 ]
+    plugin: bgp_neighbor(65002)
+  session_r2:
+    description: r2 has an ESTABLISHED eBGP session to r1
+    wait: bgp_session
+    nodes: [ r2 ]
+    plugin: bgp_neighbor(65001)
+  prefix_r1:
+    description: r1 received r2 loopback prefix over eBGP
+    wait: bgp_prefix
+    wait_msg: Waiting for BGP prefix propagation
+    nodes: [ r1 ]
+    plugin: bgp_prefix(nodes.r2.loopback.ipv4)
+  prefix_r2:
+    description: r2 received r1 loopback prefix over eBGP
+    wait: bgp_prefix
+    nodes: [ r2 ]
+    plugin: bgp_prefix(nodes.r1.loopback.ipv4)

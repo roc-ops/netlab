@@ -6,3 +6,4 @@
 #   printf 'show <path> | display json' | confd_cli -C -u admin  over ansible_connection: docker).
 # Each module's checks parse the returned OpenConfig JSON.
 from netsim.validate.ospf.arcos import *
+from netsim.validate.bgp.arcos import *
