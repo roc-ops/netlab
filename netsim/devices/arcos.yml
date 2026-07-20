@@ -292,6 +292,9 @@ clab:
     ansible_user: root
     ansible_ssh_pass: Arcos@1234           # bootstrapped 'arcadmin' login, interactive use only
     netlab_ready: [ ansible ]              # skip the SSH readiness wait -- deploy doesn't need it
+    # netlab connect/validate: run confd_cli over docker-exec (SSH/NETCONF/gNMI are disabled on
+    # this build); '| display json' yields parseable OpenConfig state. Same docker-exec path as deploy.
+    netlab_show_command: [ bash, -c, 'f=\$(mktemp); for i in \$(seq 1 60); do echo ''show $@ | display json'' | confd_cli -C -u admin > \$f 2>/dev/null; python3 -c ''import sys,json; json.load(open(sys.argv[1]))'' \$f 2>/dev/null && { cat \$f; rm -f \$f; exit 0; }; sleep 1; done; cat \$f; rm -f \$f' ]
 external:
   image: none
 graphite.icon: router

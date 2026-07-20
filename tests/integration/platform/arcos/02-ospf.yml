@@ -1,0 +1,33 @@
+# ArcOS OSPFv2 -- native docker-exec validation (confd_cli + '| display json'), no gNMI/SSH.
+# Validation transport: devices/arcos.yml -> clab.group_vars.netlab_show_command runs
+#   printf 'show <path> | display json' | confd_cli -C -u admin  over ansible_connection: docker,
+# parsed by netsim/validate/ospf/arcos.py -- the same docker-exec path used to deploy config.
+message: |
+  ArcOS runs OSPFv2 on the r1-r2 link. Each node must see the other as a FULL OSPF neighbor,
+  read back over docker-exec confd_cli JSON (no SSH/NETCONF/gNMI on this build).
+
+defaults.device: arcos
+provider: clab
+plugin: [ multilab ]
+defaults.multilab.id: 78
+
+module: [ ospf ]
+
+defaults.const.validate.ospfv2_adj_lan: 120
+defaults.const.validate.ospfv2_spf: 20
+
+nodes: [ r1, r2 ]
+links: [ r1-r2 ]
+
+validate:
+  adj_r1:
+    description: r1 has r2 as a FULL OSPFv2 neighbor (docker-exec confd_cli)
+    wait_msg: Waiting for the r1-r2 OSPFv2 adjacency
+    wait: ospfv2_adj_lan
+    nodes: [ r1 ]
+    plugin: ospf_neighbor(nodes.r2.ospf.router_id)
+  adj_r2:
+    description: r2 has r1 as a FULL OSPFv2 neighbor (docker-exec confd_cli)
+    wait: ospfv2_spf
+    nodes: [ r2 ]
+    plugin: ospf_neighbor(nodes.r1.ospf.router_id)
