@@ -23,6 +23,7 @@ group_vars:
   ansible_network_os: ipinfusion.ocnos.ocnos
   ansible_connection: network_cli
   netlab_device_type: ocnos
+  netlab_ready: [ ansible ]
   netlab_check_retries: 60      # OcNOS vrnetlab boots ~9 min; default 20x5=100s is far too
   netlab_check_delay: 12        # short, so config-deploy SSH-times-out. 60x12 = 720s wait.
   collections:
