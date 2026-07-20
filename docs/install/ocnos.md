@@ -67,3 +67,42 @@ netlab validate
 Verified live (vrnetlab `ipinfusion_ocnos:7.0.0-262`, FRR probes): the OSPF, BGP and IS-IS
 integration tests pass with native `netlab validate`, and DUT-side neighbor/prefix checks pass
 over the Ansible transport.
+
+## Validated modules (native `netlab validate`)
+
+Live-verified against vrnetlab `ipinfusion_ocnos:7.0.0-262` with FRR / cEOS / Linux probes,
+using the Ansible validation transport described above. "Probe" = the check runs on the
+adjacent probe (interop); "DUT" = the check runs on the OcNOS device over the Ansible transport.
+
+| Module | Integration test | Result |
+|---|---|---|
+| ospf (v2) | `ospf/ospfv2/01-network` | PASS 4/4 (probe) + 3/3 (DUT: neighbor Full, route present) |
+| bgp | `bgp/01-ebgp-session` | PASS 3/3 (probe) + 3/3 (DUT: sessions Established, prefix present) |
+| isis | `isis/01-ipv4` | PASS 5/5 (probe) + 2/2 (DUT: adjacency L1, prefix present) — needed the `dynamic-hostname` fix |
+| vlan | `vlan/01-vlan-bridge-single` | PASS 1/1 (host-to-host ping across the bridge) |
+| lag | `lag/01-l3-lag` | PASS (LAG active on both EOS probes + IPv4 ping; one warning-level path-MTU check) |
+| stp | `stp/01-stp-priority` | PASS 2/2 (link forwarding + root-bridge priority) — needed the bridge-priority fix |
+| vrf | `vrf/11-multi-vrf-ospf` | Single-area VRF fully green (per-VRF adjacency, routes, ping, inter-VRF isolation). See exception below for the multi-area sub-case. |
+
+Two config-completeness fixes came out of this pass: IS-IS `dynamic-hostname` (peers can map the
+DUT system-id to a name) and the STP customer-bridge `priority` (was never rendered).
+
+## Documented exceptions
+
+A "full" device may ship with clearly-documented exceptions; these are recorded rather than faked.
+
+* **Multi-area OSPF inside a VRF** (`vrf/11` blue sub-case). OcNOS is a strict (Cisco-type) ABR: it
+  will not originate inter-area type-3 summaries when its backbone (area 0) is *inactive* — here the
+  VRF's only area-0 interface is a stub loopback, so two non-backbone areas connected only through the
+  DUT do not exchange routes. (OSPF-in-VRF also defaults to MPLS-VPN "superbackbone" mode;
+  `capability vrf-lite` clears that but not the inactive-backbone rule.) FRR/EOS are lenient ABRs and
+  summarize anyway. Single-area VRF OSPF is unaffected and passes.
+* **gateway / VRRP** — config generation is verified (out-of-tree runner), but the `gateway/02-vrrp`
+  integration topology cannot be brought up on this build: netlab's clab renderer misplaces `mtu:`
+  inside a bridge link's `endpoints` list (generic core bug, tracked on `fix/clab-render-mtu`, not
+  OcNOS-specific).
+* **dhcp relay** — the 3-piece OcNOS relay config is verified out-of-tree; the `dhcp/11-ipv4-relay`
+  integration test needs a libvirt-based `dnsmasq` server probe, unavailable on this clab-only host.
+* **EVPN datapath** (#25/#26), **GRE tunnel line-protocol** (#24), **VRF-bound-interface ingress**
+  (#27), **per-VRF OSPFv3 + IPv6 VRF route-leak** (#28) — tracked platform/image limitations, config
+  generation present where applicable.
