@@ -33,16 +33,37 @@ validation note below). Device settings: `interface_name eth{ifindex}`, `mgmt_if
 `gre`. See `netsim/devices/ocnos.yml` `features:` for the authoritative list; support level is
 **best-effort** (see `docs/caveats.md`).
 
-## Validation caveat (important for `netlab validate`)
+## Validation over the Ansible transport (`netlab validate`)
 
-OcNOS's `ocnos` user has a **restricted shell**: it drops into `cmlsh` only on an *interactive* login.
-`ssh ocnos@node "show ..."` (and every `cmlsh -e/-c` variant) returns ``Try `cmlsh --help'`` — there is
-**no non-interactive exec** — and OcNOS emits **no JSON** (it is OpenConfig/gNMI/NETCONF-native).
-netlab's native `netlab validate` runs `show ... json` over `netlab connect` (SSH), so it **cannot
-validate OcNOS unmodified**. Validate instead over the working transports:
+OcNOS's `ocnos` user has a **restricted shell**: it drops into `cmlsh` only on an *interactive*
+login. `ssh ocnos@node "show ..."` (and every `cmlsh -e/-c` variant) returns ``Try `cmlsh --help'`` --
+there is **no non-interactive exec** -- and OcNOS emits CLI **text**, not JSON. netlab's stock
+`netlab validate` fetches show data over `netlab connect` (SSH), which therefore cannot drive OcNOS.
 
-* **gNMI** — subscribe-once (Get times out on the vrnetlab VM); `gnmic` against the OpenConfig paths.
-* **Ansible** — `ipinfusion.ocnos.ocnos_command` for assertion-based show checks.
+OcNOS resolves this with a new **non-interactive connection transport** -- `ansible_connect`
+in `netsim/cli/connect.py`, the Ansible peer of the existing `docker_connect` (docker-exec)
+and `ssh_connect` transports. It is a generic netlab-core hook: any device whose CLI lacks a
+non-interactive SSH exec can opt in via `devices/<dev>.yml` `group_vars`:
 
-This is a netlab-framework limitation (validation transport), not an OcNOS config-template issue —
-config generation (`netlab create`/`up`) works normally.
+```
+netlab_validate_transport: ansible
+netlab_validate_ansible_module: ipinfusion.ocnos.ocnos_command
+```
+
+With this, non-interactive command/show execution (`netlab validate`, `netlab connect --show ...`)
+runs through `ipinfusion.ocnos.ocnos_command` against the netlab-generated inventory, while an
+*interactive* `netlab connect` still uses SSH -> `cmlsh`. Because OcNOS output is text, the OcNOS
+validators (`netsim/validate/<module>/ocnos.py`, re-exported from `netsim/validate/ocnos.py`) use
+the `exec_`/`valid_` contract and screen-scrape the returned text.
+
+Run the standard integration suite against an OcNOS device under test:
+
+```
+export NETLAB_DEVICE=ocnos NETLAB_PROVIDER=clab
+netlab up  tests/integration/ospf/ospfv2/01-network.yml
+netlab validate
+```
+
+Verified live (vrnetlab `ipinfusion_ocnos:7.0.0-262`, FRR probes): the OSPF, BGP and IS-IS
+integration tests pass with native `netlab validate`, and DUT-side neighbor/prefix checks pass
+over the Ansible transport.
