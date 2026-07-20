@@ -7,5 +7,5 @@ SONiC is already an upstream netlab device (libvirt). This adds a containerlab p
   connection (docker exec) since docker-sonic-vs ships no running sshd.
 - netsim/validate/{,ospf,bgp,isis,route}/sonic_clab.py re-export the FRR validation plugins
   (SONiC-VS runs FRR/vtysh), so netlab up -d sonic_clab <test> --validate runs show commands
-  natively over docker-exec. Verified: OSPF adjacency validation passes (Tests passed: 2).
+  natively over docker-exec. Verified natively over docker-exec: OSPF, BGP (eBGP session), and IS-IS adjacency validation all pass (`netlab up -d sonic_clab <test> --validate` -> Tests passed: 2 each).
 - tests/integration/platform/sonic_clab/02-ospf.yml carries a native validate: section as the pattern.
