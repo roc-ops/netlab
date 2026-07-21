@@ -280,11 +280,17 @@ features:
         locpref: true
         med: true
         community: true   # standard communities only -- see templates/routing/arcos.j2
+# All netlab devices default to MTU 1500 (netlab.tools/links/#changing-mtu). ArcOS needs this
+# explicit device default so l.mtu resolves in a no-MTU topology and initial/arcos.j2 renders the
+# interface MTU leaf -- the ArcOS interface mtu leaf is programmed as (leaf - 26), so the
+# template sets leaf = l.mtu + 26 to make ArcOS advertise/use 1500 and converge OSPF against FRR
+# (whose veths are 1500) without any containerlab/core change.
+mtu: 1500
+
 clab:
   # Users obtain their own ArcOS image (commercial NOS, same pattern as arubacx/dellos10/sros)
   # and tag it arcos:8.2.1A.P2, or override clab.image in their topology.
   image: arcos:8.2.1A.P2
-  mtu: 1500
   node:
     kind: arrcus_arcos
   group_vars:
