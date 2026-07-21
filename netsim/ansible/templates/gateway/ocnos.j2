@@ -23,3 +23,20 @@ router vrrp {{ l.gateway.vrrp.group|default(1) }} {{ l.ifname }}
  enable
 !
 {% endfor %}
+{% for l in netlab_interfaces if l.gateway.protocol|default('') == 'vrrp' and l.gateway.ipv6 is defined %}
+router ipv6 vrrp {{ l.gateway.vrrp.group|default(1) }} {{ l.ifname }}
+{#   IPv6 VRRP (VRRPv3) needs a link-local PRIMARY virtual address before the global one
+     -- OcNOS rejects the global alone (%% No Primary VRRP IP address exists). netlab
+     supplies the VRRP link-local as l.gateway.lla; list it first, then the global. There
+     is no `secondary` keyword (rejected) and no v2-compatible for v6. #}
+ virtual-ipv6 {{ l.gateway.vrrp.lla }}
+ virtual-ipv6 {{ l.gateway.ipv6 | ansible.utils.ipaddr('address') }}
+{%   if l.gateway.vrrp.priority is defined %}
+ priority {{ l.gateway.vrrp.priority }}
+{%   endif %}
+{%   if not l.gateway.vrrp.preempt|default(True) %}
+ preempt-mode false
+{%   endif %}
+ enable
+!
+{% endfor %}
