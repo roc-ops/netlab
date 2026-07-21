@@ -3,7 +3,7 @@
     router bgp <as> ; bgp router-id <id> (sub-option, not standalone)
     neighbor <peer> remote-as <as> | description '<t>' | update-source <if> | next-hop-self
     address-family {ipv4|ipv6} [unicast] ... exit-address-family
-    network <ip>/<prefix>   (CIDR, Casa convention)
+    network <ip> mask <mask>   (IPv4 dotted-mask, Casa convention); IPv6: network <ip>/<prefix>
   Casa auto-creates the ipv4-unicast + ipv6 AFs when BGP is enabled; we still emit the AF
   blocks explicitly for activation/advertisement. netlab model: node bgp.{as,router_id,
   neighbors[],advertise[],ipv4,ipv6}; neighbor n.{name,as,ipv4,ipv6,type,activate.{ipv4,ipv6}}.
@@ -44,7 +44,11 @@ router bgp {{ bgp.as }}
 {% for af in ['ipv4','ipv6'] if bgp[af] is defined %}
   address-family {{ af }} unicast
 {%   for pfx in bgp.advertise|default([]) if af in pfx %}
+{%     if af == 'ipv4' %}
+  network {{ pfx[af]|ansible.utils.ipaddr('address') }} mask {{ pfx[af]|ansible.utils.ipaddr('netmask') }}
+{%     else %}
   network {{ pfx[af] }}
+{%     endif %}
 {%   endfor %}
 {%   for n in bgp.neighbors if n.activate[af]|default(False) and n[af] is string %}
   neighbor {{ n[af] }} activate
