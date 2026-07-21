@@ -1,0 +1,36 @@
+{#
+  vCCAP (Aurora Evo, ex-Casa) VRF (RocContLab #64). Casa NSI Ch.35 + Ch.9 (interface):
+    definition: ip vrf <name> / rd <rd> / route-target {import|export|both} <rt>
+                (per-AF route-targets under `address-family {ipv4|ipv6}` / exit-address-family)
+    interface:  ip vrf forwarding <name>   (bound in initial/casa.j2 addressing, see note)
+  netlab model: node `vrfs: {<name>: {rd, import[], export[], af:{ipv4,ipv6}}}`.
+  Interface-to-VRF binding is emitted by the vrf module here as an addressing overlay is not
+  used; netlab carries `l.vrf` on interfaces — bound below so forwarding matches the plan.
+#}
+{% for vname, vdata in vrfs.items() %}
+ip vrf {{ vname }}
+{%   if vdata.rd is defined %}
+  rd {{ vdata.rd }}
+{%   endif %}
+{%   for rt in vdata.import|default([]) %}
+  route-target import {{ rt }}
+{%   endfor %}
+{%   for rt in vdata.export|default([]) %}
+  route-target export {{ rt }}
+{%   endfor %}
+!
+{% endfor %}
+{# ---- bind interfaces to their VRF (Casa: `ip vrf forwarding` clears the IP, so it must
+     precede addressing; netlab's initial render addresses after — we (re)assert binding +
+     address here so a VRF interface lands in the right table). ---- #}
+{% for l in netlab_interfaces|default([]) if l.vrf is defined %}
+interface {{ l.ifname }}
+  ip vrf forwarding {{ l.vrf }}
+{%   if 'ipv4' in l and l.ipv4 is string %}
+  ip address {{ l.ipv4|ansible.utils.ipaddr('address') }} {{ l.ipv4|ansible.utils.ipaddr('netmask') }}
+{%   endif %}
+{%   if 'ipv6' in l and l.ipv6 is string %}
+  ipv6 address {{ l.ipv6 }}
+{%   endif %}
+!
+{% endfor %}

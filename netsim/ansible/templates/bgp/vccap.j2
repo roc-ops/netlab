@@ -1,0 +1,42 @@
+{#
+  vCCAP (Aurora Evo, ex-Casa) BGP (RocContLab #64). Casa NSI Ch.3:
+    router bgp <as> ; bgp router-id <id> (sub-option, not standalone)
+    neighbor <peer> remote-as <as> | description '<t>' | update-source <if> | next-hop-self
+    address-family {ipv4|ipv6} [unicast] ... exit-address-family
+    network <ip>/<prefix>   (CIDR, Casa convention)
+  Casa auto-creates the ipv4-unicast + ipv6 AFs when BGP is enabled; we still emit the AF
+  blocks explicitly for activation/advertisement. netlab model: node bgp.{as,router_id,
+  neighbors[],advertise[],ipv4,ipv6}; neighbor n.{name,as,ipv4,ipv6,type,activate.{ipv4,ipv6}}.
+  (redistribute/bgp.import, peer-groups, route-maps = follow-up in #64.)
+#}
+router bgp {{ bgp.as }}
+{% if bgp.router_id is defined %}
+  bgp router-id {{ bgp.router_id }}
+{% endif %}
+{# ---- global neighbor config (one peer address per address family) ---- #}
+{% for n in bgp.neighbors %}
+{%   for af in ['ipv4','ipv6'] if n[af] is defined and n[af] is string %}
+  neighbor {{ n[af] }} remote-as {{ n.as }}
+{%     if n.name is defined %}
+  neighbor {{ n[af] }} description '{{ n.name }}'
+{%     endif %}
+{%     if n.type|default('') == 'ibgp' and loopback is defined %}
+  neighbor {{ n[af] }} update-source {{ loopback.ifname }}
+{%     endif %}
+{%   endfor %}
+{% endfor %}
+{# ---- address families ---- #}
+{% for af in ['ipv4','ipv6'] if bgp[af] is defined %}
+  address-family {{ af }} unicast
+{%   for pfx in bgp.advertise|default([]) if af in pfx %}
+  network {{ pfx[af] }}
+{%   endfor %}
+{%   for n in bgp.neighbors if n.activate[af]|default(False) and n[af] is string %}
+  neighbor {{ n[af] }} activate
+{%     if n.type|default('') == 'ibgp' %}
+  neighbor {{ n[af] }} next-hop-self
+{%     endif %}
+{%   endfor %}
+  exit-address-family
+{% endfor %}
+!

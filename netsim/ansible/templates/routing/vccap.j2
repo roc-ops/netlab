@@ -1,0 +1,27 @@
+{#
+  vCCAP (Aurora Evo, ex-Casa) routing module (RocContLab #64) — static routes.
+  Casa NSI (vendor-docs/casa-8.8 NSI Ch.31 "Static Routing" + Ch.13 "ipv6 route"):
+    IPv4:  ip route   [vrf <v>] <prefix> {<nexthop>|<intf>|null0} [global|gw-vrf <v>]
+    IPv6:  ipv6 route [vrf <v>] <prefix> {<nexthop>|<intf>|null0} [gw-vrf <v>]
+  Casa uses CIDR prefixes (no dotted-mask). null0 = black-hole route. Inter-VRF leak:
+  gw-vrf <v>; a netlab nexthop.vrf of None (explicit null) leaks to the global table (IPv4 `global`).
+  (route-maps / prefix-lists / as-path / community lists = Casa NSI Ch.28 — follow-up in #64.)
+#}
+{% for sr in routing.static|default([]) %}
+{%   set vrf = 'vrf ' + sr.vrf + ' ' if 'vrf' in sr else '' %}
+{%   if 'ipv4' in sr %}
+{%     set nh4 = 'null0' if 'discard' in sr.nexthop
+                 else ((sr.nexthop.ipv4 + ' ' + sr.nexthop.intf) if ('intf' in sr.nexthop and 'ipv4' in sr.nexthop)
+                       else (sr.nexthop.intf if 'intf' in sr.nexthop else sr.nexthop.ipv4)) %}
+{%     set leak4 = ' global' if ('vrf' in sr.nexthop and sr.nexthop.vrf is none)
+                   else (' gw-vrf ' + sr.nexthop.vrf if sr.nexthop.vrf|default(false) else '') %}
+ip route {{ vrf }}{{ sr.ipv4|ansible.utils.ipaddr('subnet') }} {{ nh4 }}{{ leak4 }}
+{%   endif %}
+{%   if 'ipv6' in sr %}
+{%     set nh6 = 'null0' if 'discard' in sr.nexthop
+                 else ((sr.nexthop.ipv6 + ' ' + sr.nexthop.intf) if ('intf' in sr.nexthop and 'ipv6' in sr.nexthop)
+                       else (sr.nexthop.intf if 'intf' in sr.nexthop else sr.nexthop.ipv6)) %}
+{%     set leak6 = ' gw-vrf ' + sr.nexthop.vrf if sr.nexthop.vrf|default(false) else '' %}
+ipv6 route {{ vrf }}{{ sr.ipv6 }} {{ nh6 }}{{ leak6 }}
+{%   endif %}
+{% endfor %}

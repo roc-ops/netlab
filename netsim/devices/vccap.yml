@@ -1,0 +1,82 @@
+---
+# Aurora vCCAP Evo — virtual CCAP (formerly Casa Systems), EXTERNAL-provider device (RocContLab #48/#65).
+#
+# vCCAP is the virtual CCAP peer of the physical `casa` device. Its NETWORK-SIDE (NSI) plane is
+# essentially identical to Casa's (same CLI: interface gige/loopback, router ospf/bgp/isis/rip,
+# ip vrf, ip route, mpls ip/router ldp) — vendor-docs/cablelabs-docsis-3.1/render/vccap README
+# documents that ALL vCCAP deltas vs physical Casa are DOCSIS-side; the NSI plane is Casa's.
+# So this device REUSES the Casa NSI render model: features + module templates mirror `casa`,
+# selected via `ansible_network_os: vccap` -> netsim/ansible/templates/*/vccap.j2 (copies of casa.j2).
+#
+# Like `casa`, vCCAP is external-only here: netlab generates the addressing plan + config artifact
+# but never deploys it (provider: external). Drop a `vccap` node into any topology to configure the
+# CCAP alongside virtual (clab) NOS nodes from ONE netlab YAML.
+#
+# NSI CLI source of truth: wiki/okf/vccap-10.10.2/cli-ref (confirmed identical command forms to
+# casa-8.8 NSI). DOCSIS access-side = the custom `docsis` module (vccap render model reuses casa-8.8
+# ~95%, wiki/okf/vccap-10.10.2 + vendor-docs/vccap-10.10.2/DEFAULTS.md). Ledger: docs/netlab-fork.md.
+
+description: Aurora vCCAP Evo — virtual CCAP (external / config-gen only)
+
+interface_name: gige 1/{ifindex}         # vCCAP `interface gige <slot>/<port>` (placeholder slot;
+                                          # for real HW set per-link `ifname`, or refine in #65)
+loopback_interface_name: loopback {ifindex}
+mgmt_if: eth 6/0                          # vCCAP FastEthernet mgmt port `interface eth <slot>/<port>`
+
+clab:
+  image: none                            # placeholder image — CCAP is `unmanaged` (never deployed by netlab)
+libvirt:
+  image: none
+external:
+  image: none                            # external config-gen mode (later phase)
+
+group_vars:
+  ansible_network_os: vccap              # selects the netsim/ansible/templates/*/vccap.j2 render path
+  ansible_connection: network_cli        # vCCAP CLI over SSH (used ONLY if pushing to real HW)
+  netlab_device_type: vccap
+
+features:
+  initial:
+    ipv4: True
+    ipv6: True
+  # Network-side (NSI) modules — identical set/behaviour to Casa (vCCAP NSI == Casa NSI). Rendered
+  # by netsim/ansible/templates/<module>/vccap.j2 (copies of casa.j2). DOCSIS access-side = `docsis`.
+  ospf:
+    # vCCAP NSI (== Casa Ch.23). OSPFv2 = `router ospf` + `network <ip>/<prefix> area`;
+    # OSPFv3 = `router ospf6` + interface `ipv6 router ospf <pid> area`. Rendered: network_type,
+    # cost, priority, bfd, passive, router_id. (timers/password/import/areas = follow-up in #65.)
+    priority: true
+  isis:
+    # vCCAP NSI (== Casa Ch.10). router isis <tag>/net/is-type/metric-style wide; interface
+    # ip|ipv6 router isis, isis network point-to-point, metric, circuit-type, bfd.
+    # is-type/circuit-type use `level-2-only` (confirmed in vccap cli-ref ch.17).
+    circuit_type: true
+  bgp:
+    # vCCAP NSI (== Casa Ch.3). router bgp/bgp router-id; neighbor remote-as/description/
+    # update-source/next-hop-self; address-family {ipv4|ipv6} unicast; network (CIDR).
+    activate_af: true
+    advertise: true
+  vrf:
+    # vCCAP NSI (== Casa Ch.35). ip vrf <name>/rd/route-target; interface ip vrf forwarding <name>.
+    ospfv2: false
+    ospfv3: false
+    bgp: false
+  routing:
+    # vCCAP NSI (== Casa Ch.31/13) static routes (ip route / ipv6 route, CIDR, null0, gw-vrf/global).
+    static:
+      vrf: true          # ip route vrf <name>
+      inter_vrf: true    # gw-vrf <name> / global (leak)
+      discard: true      # null0 black-hole
+  mpls:
+    # vCCAP NSI (== Casa Ch.15). `mpls ip` (global+interface) + `router ldp` (router-id/transport-
+    # address) + interface `enable-ldp ipv4`. LDP only — no BGP-LU/6PE. (vpn/te = follow-up.)
+    ldp: true
+  ripv2:
+    # vCCAP NSI (== Casa Ch.29). IPv4 RIPv2 via `router rip`/`version 2`/`network` + passive.
+    # RIPng interface-attach undocumented -> IPv6 RIP intentionally unsupported.
+    ipv4: true
+    passive: true
+  docsis:
+    # DOCSIS access-side custom module (RocContLab #48/#65). netlab plans MAC domains onto this
+    # node; the render/vccap bridge renders them via the guardrailed vccap casa_render (external).
+    mac_domains: true

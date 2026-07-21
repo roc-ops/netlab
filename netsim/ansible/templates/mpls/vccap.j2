@@ -1,0 +1,33 @@
+{#
+  vCCAP (Aurora Evo, ex-Casa) MPLS / LDP (RocContLab #64). Casa NSI Ch.15 + Ch.9 (interface):
+    global:    mpls ip                       (global MPLS forwarding on)
+    process:   router ldp -> router-id <id> / transport-address ipv4 <id>
+    interface: mpls ip + enable-ldp ipv4     (BOTH required — Casa-ism)
+  CASA DEVIATIONS vs IOS: no `mpls ldp` global (LDP is the `router ldp` process); interface
+  needs `enable-ldp ipv4` in addition to `mpls ip`. No BGP-LU/6PE in Casa NSI — LDP only.
+  netlab model: LDP is per-interface (`l.ldp`, a dict; truthy when LDP runs on the link);
+  the LDP router-id/transport-address are the loopback (node `router_id` may be unset).
+  (l.ldp.passive / targeted-peer = follow-up in #64.)
+#}
+{% set ns = namespace(any=false) %}
+{% for l in netlab_interfaces|default([]) if l.ldp is defined and l.type not in ['loopback','tunnel'] %}
+{%   set ns.any = true %}
+{% endfor %}
+{% if ns.any %}
+{%   set ldp_rid = (loopback.ipv4|ansible.utils.ipaddr('address'))
+        if (loopback is defined and 'ipv4' in loopback and loopback.ipv4 is string)
+        else (router_id if router_id else '') %}
+mpls ip
+router ldp
+{%   if ldp_rid %}
+  router-id {{ ldp_rid }}
+  transport-address ipv4 {{ ldp_rid }}
+{%   endif %}
+!
+{%   for l in netlab_interfaces|default([]) if l.ldp is defined and l.type not in ['loopback','tunnel'] %}
+interface {{ l.ifname }}
+  mpls ip
+  enable-ldp ipv4
+!
+{%   endfor %}
+{% endif %}
