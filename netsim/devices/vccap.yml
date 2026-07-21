@@ -35,6 +35,33 @@ group_vars:
   ansible_connection: network_cli        # vCCAP CLI over SSH (used ONLY if pushing to real HW)
   netlab_device_type: vccap
 
+# DEVICE-SCOPED NSI node attributes (RocContLab #64). vCCAP reuses the shared Casa NSI attribute
+# namespace (bgp/vccap.j2 mirrors bgp/casa.j2 and references `casa_bgp.*`); declared here so it
+# validates ONLY on vccap/casa nodes. Mirrors netsim/devices/casa.yml. External/static BGP peers:
+# a CCAP peers with REAL routers (upstream ISPs, RRs), never lab nodes, so netlab topology-derived
+# `bgp.neighbors` cannot carry them; plus the Casa/vCCAP BGP process flags not in netlabs bgp model.
+attributes:
+  node:
+    casa_bgp:
+      type: dict
+      _keys:
+        ext_neighbors:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              ipv4:        { type: ipv4, use: address }
+              ipv6:        { type: ipv6, use: address }
+              remote_as:   { type: int, _required: True }
+              description: str
+              advertisement_interval:       int
+              soft_reconfiguration_inbound: bool
+              prefix_list_in:  str
+              prefix_list_out: str
+        networks: { type: list, _subtype: { type: ipv4, use: subnet } }   # AF `network <p> mask <m>`
+        log_neighbor_changes: bool
+        always_compare_med:   bool
+
 features:
   initial:
     ipv4: True
