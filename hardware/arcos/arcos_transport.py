@@ -22,7 +22,7 @@ NO working push path:
     arguments, so an accidental call cannot reach the hardware.
 """
 from __future__ import annotations
-import os, subprocess, shlex
+import os, re, subprocess, shlex
 
 
 DEFAULT_HOST = "10.22.64.223"
@@ -101,7 +101,55 @@ class Transport:
                 + f"\n# ----- candidate config ({len(config_text.splitlines())} lines) -----\n"
                 + config_text.rstrip() + "\n")
 
-    def apply_push(self, *_a, **_k):
-        raise PushDisabled(
-            "apply_push is HARD-DISABLED in hardware phase 1. Applying to the live box is "
-            "human-gated on review of the dry-run. This method never reaches the hardware.")
+    # -- staging + GATED apply + rollback --------------------------------------
+    # NOTE: this GATED form exists only for the human-approved one-shot swp48 apply
+    # (issue #39 phase 1). It fires ONLY when the caller passes allow=True AND the operator
+    # exports ARCOS_HW_ALLOW_PUSH=YES -- two independent locks, so nothing pushes by accident.
+    # After the approved change is applied + verified, this method is reverted to the
+    # unconditional `raise PushDisabled` (see git history) so the loop cannot fire again.
+    _ALLOW_ENV = "ARCOS_HW_ALLOW_PUSH"
+    _STAGED = "/tmp/netlab-arcos-candidate.cfg"
+
+    def _gate(self, allow: bool):
+        if not (allow and os.environ.get(self._ALLOW_ENV) == "YES"):
+            raise PushDisabled(
+                "push is gated: needs allow=True AND "
+                f"{self._ALLOW_ENV}=YES. Applying to the live box is human-gated.")
+
+    def _stage_candidate(self, config_text: str, remote_path: str | None = None) -> str:
+        """Stage the candidate to a temp file on the box (the `load merge` source).
+        base64 over the wire so no quoting/escaping can corrupt it. Contains no secrets."""
+        import base64
+        path = remote_path or self._STAGED
+        b64 = base64.b64encode(config_text.encode()).decode()
+        self._run_ssh(f"echo {b64} | base64 -d > {shlex.quote(path)}")
+        return path
+
+    def apply_push(self, config_text: str, comment: str = "netlab swp48 apply (issue #39)",
+                   allow: bool = False) -> str:
+        """GATED real apply: stage -> `config` / `load merge` / `commit` (the proven confd
+        sequence from the container deploy task, over SSH). confd returns rc 0 even on a merge
+        parse error, so we scan output for Error:/Aborted:/syntax error and raise on any."""
+        self._gate(allow)
+        path = self._stage_candidate(config_text)
+        cmd = (f"printf 'config\\nload merge {path}\\n"
+               f"commit comment \"{comment}\"\\nend\\n' | cli")
+        out = self._run_ssh(cmd, timeout=40)
+        if re.search(r"Error:|Aborted:|syntax error", out, re.I):
+            raise RuntimeError(f"confd rejected the merge -- NOT committed:\n{out}")
+        return out
+
+    def rollback_preview(self, sno: int = 0) -> str:
+        """READ-ONLY: what `rollback selective <sno>` would change (no config session)."""
+        return self.show(f"show configuration rollback changes {sno}")
+
+    def rollback_selective(self, sno: int = 0, allow: bool = False) -> str:
+        """GATED: selectively revert commit <sno> (0 == most recent) -> `config` /
+        `rollback selective` / `commit`. Same two locks as apply_push."""
+        self._gate(allow)
+        cmd = (f"printf 'config\\nrollback selective {sno}\\n"
+               f"commit comment \"netlab rollback swp48\"\\nend\\n' | cli")
+        out = self._run_ssh(cmd, timeout=40)
+        if re.search(r"Error:|Aborted:|syntax error", out, re.I):
+            raise RuntimeError(f"confd rejected the rollback:\n{out}")
+        return out
