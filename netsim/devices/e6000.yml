@@ -86,6 +86,12 @@ attributes:
         default_local_preference: int
         maximum_paths:  { type: dict, _keys: { ebgp: int, ibgp: int } }
         deterministic_med: bool
+    # Prefix-list NAMES. netlab routing.prefix KEYS must be <=16-char valid identifiers, so the real
+    # E6000 chassis names (hyphen + leading digit, e.g. 700-CM-PREFIX) cannot be the netlab key. The
+    # prefix-list LINE grammar renders fine from routing.prefix; only the NAME cannot round-trip. This
+    # device-scoped map (netlab key -> real device name) mirrors the route-map name pattern
+    # (e6000_route_maps.name is a free str), letting routing/e6000.j2 emit `ip prefix-list <real-name>`.
+    e6000_prefix_names: { type: dict, _subtype: str }
     # Route-maps (E6000 uses `route-map <name> <permit|deny> <seq>` + `match ip address prefix-list`,
     # `set community [add] <c>`, `set local-preference <n>`, `set origin <o>`, `continue <seq>`). netlab
     # routing.policy is thinner, so route-maps ride a complete device-scoped node attribute.

@@ -31,13 +31,16 @@ ip route {{ r.prefix }} {{ r.mask }} {{ 'null 0' if r.null_route|default(False) 
 {% endfor %}
 {# ---- prefix-lists (routing.prefix). netlab min->ge, max->le (normalised to per-AF dict or int) ---- #}
 {% for name, entries in (routing.prefix|default({})).items() %}
+{# device-scoped name override: netlab keys are <=16-char identifiers, so map to the real chassis
+   prefix-list name (e.g. 700-CM-PREFIX) when one is declared in e6000_prefix_names #}
+{% set pl_name = (e6000_prefix_names|default({})).get(name, name) %}
 {% for e in entries %}
 {% set fam = 'ipv6' if 'ipv6' in e else 'ip' %}
 {% set afk = 'ipv6' if 'ipv6' in e else 'ipv4' %}
 {% set pfx = e.ipv6 if 'ipv6' in e else e.ipv4 %}
 {% set ge = (e.min[afk] if e.min is mapping else e.min) if e.min is defined else none %}
 {% set le = (e.max[afk] if e.max is mapping else e.max) if e.max is defined else none %}
-{{ fam }} prefix-list {{ name }} seq {{ e.sequence }} {{ e.action|default('permit') }} {{ pfx }}{{ ' ge '+ge|string if ge is not none else '' }}{{ ' le '+le|string if le is not none else '' }}
+{{ fam }} prefix-list {{ pl_name }} seq {{ e.sequence }} {{ e.action|default('permit') }} {{ pfx }}{{ ' ge '+ge|string if ge is not none else '' }}{{ ' le '+le|string if le is not none else '' }}
 {% endfor %}
 {% endfor %}
 {# ---- route-maps (device-scoped e6000_route_maps) ---- #}
