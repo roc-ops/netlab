@@ -13,6 +13,8 @@ support:
     see docs/caveats.md for details. If you do hit a stalled deploy after an OSPF
     topology change, re-run 'netlab initial' once as a fallback.
 interface_name: eth{ifindex}
+mtu: 1500                 # device default MTU (maintainer convention): declares OcNOS defaults to 1500 so
+                          # netlab resolves a consistent per-link MTU across mixed-device links (OcNOS ifs default 1500)
 ifindex_offset: 1
 mgmt_if: eth0
 loopback_interface_name: '{"lo" if not ifindex else "loopback" + str(ifindex)}'
