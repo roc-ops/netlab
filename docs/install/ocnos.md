@@ -82,10 +82,12 @@ adjacent probe (interop); "DUT" = the check runs on the OcNOS device over the An
 | vlan | `vlan/01-vlan-bridge-single` | PASS 1/1 (host-to-host ping across the bridge) |
 | lag | `lag/01-l3-lag` | PASS (LAG active on both EOS probes + IPv4 ping; one warning-level path-MTU check) |
 | stp | `stp/01-stp-priority` | PASS 2/2 (link forwarding + root-bridge priority) — needed the bridge-priority fix |
+| gateway | `gateway/02-vrrp` | IPv4 VRRP fully green (VIP ping, backup/master/preempt). IPv6 VRRP control-plane green (master election + backup/master/preempt) + steady-state datapath — needed the IPv6-VRRP fix. See exception for the v6-transit-on-failover gap. |
 | vrf | `vrf/11-multi-vrf-ospf` | Single-area VRF fully green (per-VRF adjacency, routes, ping, inter-VRF isolation). See exception below for the multi-area sub-case. |
 
-Two config-completeness fixes came out of this pass: IS-IS `dynamic-hostname` (peers can map the
-DUT system-id to a name) and the STP customer-bridge `priority` (was never rendered).
+Three config-completeness fixes came out of this pass: IS-IS `dynamic-hostname` (peers can map the
+DUT system-id to a name), the STP customer-bridge `priority` (was never rendered), and IPv6 VRRP
+(the gateway template rendered IPv4 VRRP only; VRRPv3 needs a link-local primary virtual-ipv6).
 
 ## Documented exceptions
 
@@ -97,10 +99,14 @@ A "full" device may ship with clearly-documented exceptions; these are recorded 
   DUT do not exchange routes. (OSPF-in-VRF also defaults to MPLS-VPN "superbackbone" mode;
   `capability vrf-lite` clears that but not the inactive-backbone rule.) FRR/EOS are lenient ABRs and
   summarize anyway. Single-area VRF OSPF is unaffected and passes.
-* **gateway / VRRP** — config generation is verified (out-of-tree runner), but the `gateway/02-vrrp`
-  integration topology cannot be brought up on this build: netlab's clab renderer misplaces `mtu:`
-  inside a bridge link's `endpoints` list (generic core bug, tracked on `fix/clab-render-mtu`, not
-  OcNOS-specific).
+* **gateway / VRRP — IPv6 transit forwarding on failover.** The module boots and validates on stock
+  clab (an earlier boot failure was a bug in a local `clab-render-mtu` change, not netlab core — MTU
+  is handled device-side). IPv4 VRRP is fully green; IPv6 VRRP is now configured (VRRPv3, link-local
+  primary virtual address) and control-plane-verified — the DUT wins/holds master and the probe sees
+  correct backup/master/preempt transitions, and the v6 datapath pings in steady state. The remaining
+  gap: after the VRRP peer's LAN link drops, IPv6 *transit* forwarding through the DUT fails even
+  though it is master and the client's neighbor cache holds the virtual MAC — an OcNOS v6-VRRP
+  failover-forwarding edge (IPv4 failover is unaffected).
 * **dhcp relay** — the 3-piece OcNOS relay config is verified out-of-tree; the `dhcp/11-ipv4-relay`
   integration test needs a libvirt-based `dnsmasq` server probe, unavailable on this clab-only host.
 * **EVPN datapath** (#25/#26), **GRE tunnel line-protocol** (#24), **VRF-bound-interface ingress**
