@@ -111,10 +111,14 @@ class Transport:
     _STAGED = "/tmp/netlab-arcos-candidate.cfg"
 
     def _gate(self, allow: bool):
-        if not (allow and os.environ.get(self._ALLOW_ENV) == "YES"):
-            raise PushDisabled(
-                "push is gated: needs allow=True AND "
-                f"{self._ALLOW_ENV}=YES. Applying to the live box is human-gated.")
+        # RE-DISABLED after the human-approved one-shot swp48 apply (issue #39 phase 1,
+        # applied + verified 2026-07-21). The gate now refuses unconditionally, so apply_push
+        # and rollback_selective cannot reach the live box again. Broader apply waits on
+        # cabling + a fresh human approval; re-instate the two-lock gate below when that lands:
+        #   if not (allow and os.environ.get(self._ALLOW_ENV) == "YES"): raise PushDisabled(...)
+        raise PushDisabled(
+            "push is HARD-DISABLED (issue #39 phase 1 re-disable). The approved swp48 apply is "
+            "done; re-enabling requires a human-approved change that re-instates the gate.")
 
     def _stage_candidate(self, config_text: str, remote_path: str | None = None) -> str:
         """Stage the candidate to a temp file on the box (the `load merge` source).
