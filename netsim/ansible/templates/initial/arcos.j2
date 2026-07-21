@@ -25,6 +25,12 @@
 #}
 system hostname {{ inventory_hostname }}
 !
+{# Only emit loopback0 when netlab actually OWNS a loopback for this node. On real hardware
+   the box may already run loopback0 as its live router-id (e.g. the EVPN underlay identity),
+   which netlab must never re-own -- a node planned with `loopback: false` must produce no
+   loopback0 stanza at all (issue #39 hardware). Container nodes always have loopback.ipv4, so
+   this is a no-op for them. #}
+{% if loopback.ipv4 is defined or loopback.ipv6 is defined %}
 interface loopback0
  enable true
  subinterface 0
@@ -35,6 +41,7 @@ interface loopback0
    ipv6 address {{ loopback.ipv6 | ansible.netcommon.ipv6("address") }} prefix-length 128
 {% endif %}
 !
+{% endif %}
 {% for l in interfaces|default([]) if l.type|default('') == 'loopback' and l.ifname != 'loopback0' %}
 interface {{ l.ifname }}
  enable true

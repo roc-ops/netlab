@@ -1,0 +1,24 @@
+nodes:
+  roc-leaf2:
+    device: arcos
+    unmanaged: true
+    name: roc-leaf2
+    interfaces:
+    - ifindex: 48
+      ipv4: 198.19.100.1/24
+      linkindex: 1
+      role: stub
+      type: stub
+      bridge: arcos_1
+      name: roc-leaf2 -> stub
+      ifname: swp48
+      neighbors: []
+    box: none
+    id: 1
+    role: router
+    af:
+      ipv4: true
+    mgmt:
+      ifname: eth0
+      ipv4: 192.168.121.101
+    _set_ifindex: true

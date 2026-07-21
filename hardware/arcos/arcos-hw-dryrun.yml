@@ -1,0 +1,28 @@
+# DRY-RUN topology (#39 hardware phase 1): plan a single unused L3 port on the
+# real Edgecore AS7326-56X `roc-leaf2` (ArcOS S8.5.1A @ 10.22.64.223).
+#
+# roc-leaf2 is `unmanaged` -- netlab PLANS interfaces + addressing but NEVER deploys
+# (same Casa-pattern stance as the CMTS bridge). Our bridge renders the arcos.j2
+# templates from this plan; the guardrail gates it; nothing is pushed.
+#
+# The stub link gives roc-leaf2 exactly one L3 interface + IP. ifindex 48 pins it to
+# swp48 -- a genuinely BARE port in the live running-config (swp56 is NOT free: it is
+# the live underlay uplink 198.19.19.11/31, so it is deliberately avoided).
+provider: external
+defaults.device: arcos
+
+addressing:
+  lan:
+    ipv4: 198.19.100.0/24
+
+nodes:
+  roc-leaf2:
+    device: arcos
+    unmanaged: true
+    # do NOT let netlab own loopback0 -- it is the live EVPN router-id on this box
+    loopback: false
+
+links:
+- interfaces:
+  - node: roc-leaf2
+    ifindex: 48
