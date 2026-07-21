@@ -1,0 +1,62 @@
+{#
+  Arris E6000 CER routing module (RocContLab, E6000 CLI Ch.2 + FRCYNC-CM01 reference config).
+    static:      router static vrf default distance <n>           (process header)
+                 ip route <dest> <mask> {<nh>|null 0} [admin-dist <n>] [metric <n>] [vrf <v>]
+                 (E6000 uses DOTTED mask, not CIDR; `null 0` = black-hole; admin-dist = route pref)
+    prefix-list: ip prefix-list <name> seq <n> {permit|deny} <cidr> [ge <n>] [le <n>]
+    route-map:   route-map <name> {permit|deny} <seq> -> match ip address prefix-list <p> /
+                 set community [add] <c> / set local-preference <n> / set origin <o> / continue <seq>
+  netlab routing.static/routing.prefix drive the topology-derived pieces; admin-dist + metric + the
+  dotted static routes + route-maps ride device-scoped attrs (e6000_static_routes / e6000_route_maps).
+#}
+{% set have_static = (routing.static|default([])|selectattr('ipv4','defined')|list|length > 0)
+                     or (e6000_static_routes|default([])|length > 0) %}
+{% if have_static %}
+router static vrf default distance 1
+{% endif %}
+{# ---- topology-derived static routes (routing.static) ---- #}
+{% for sr in routing.static|default([]) if 'ipv4' in sr %}
+{% set net = sr.ipv4|ansible.utils.ipaddr('network') %}
+{% set mask = sr.ipv4|ansible.utils.ipaddr('netmask') %}
+{% set vrf = ' vrf ' + sr.vrf if sr.vrf is defined else '' %}
+{% if 'discard' in sr.nexthop %}
+ip route {{ net }} {{ mask }} null 0 metric 0{{ vrf }}
+{% else %}
+ip route {{ net }} {{ mask }} {{ sr.nexthop.ipv4 }} metric 0{{ vrf }}
+{% endif %}
+{% endfor %}
+{# ---- device-scoped static routes (admin-dist + metric, which netlab routing.static lacks) ---- #}
+{% for r in e6000_static_routes|default([]) %}
+ip route {{ r.prefix }} {{ r.mask }} {{ 'null 0' if r.null_route|default(False) else r.nexthop }}{{ ' admin-dist '+r.admin_dist|string if r.admin_dist is defined else '' }}{{ ' metric '+r.metric|string if r.metric is defined else '' }}{{ ' vrf '+r.vrf if r.vrf is defined else '' }}
+{% endfor %}
+{# ---- prefix-lists (routing.prefix). netlab min->ge, max->le (normalised to per-AF dict or int) ---- #}
+{% for name, entries in (routing.prefix|default({})).items() %}
+{% for e in entries %}
+{% set fam = 'ipv6' if 'ipv6' in e else 'ip' %}
+{% set afk = 'ipv6' if 'ipv6' in e else 'ipv4' %}
+{% set pfx = e.ipv6 if 'ipv6' in e else e.ipv4 %}
+{% set ge = (e.min[afk] if e.min is mapping else e.min) if e.min is defined else none %}
+{% set le = (e.max[afk] if e.max is mapping else e.max) if e.max is defined else none %}
+{{ fam }} prefix-list {{ name }} seq {{ e.sequence }} {{ e.action|default('permit') }} {{ pfx }}{{ ' ge '+ge|string if ge is not none else '' }}{{ ' le '+le|string if le is not none else '' }}
+{% endfor %}
+{% endfor %}
+{# ---- route-maps (device-scoped e6000_route_maps) ---- #}
+{% for e in e6000_route_maps|default([]) %}
+route-map {{ e.name }} {{ e.action|default('permit') }} {{ e.sequence }}
+{% if e.match_prefix is defined %}
+ match ip address prefix-list {{ e.match_prefix }}
+{% endif %}
+{% if e.set_community is defined %}
+ set community {{ 'add ' if e.set_community_add|default(False) else '' }}{{ e.set_community|join(' ') }}
+{% endif %}
+{% if e.set_locpref is defined %}
+ set local-preference {{ e.set_locpref }}
+{% endif %}
+{% if e.set_origin is defined %}
+ set origin {{ e.set_origin }}
+{% endif %}
+{% if e.continue_seq is defined %}
+ continue {{ e.continue_seq }}
+{% endif %}
+exit
+{% endfor %}

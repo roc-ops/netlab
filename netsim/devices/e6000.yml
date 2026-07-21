@@ -1,0 +1,168 @@
+---
+# Arris / Aurora E6000 CER I-CCAP (integrated CCAP chassis) — EXTERNAL-provider device (RocContLab #48).
+#
+# Like the Casa CMTS, the E6000 is "big iron" that is not virtualizable, so this is an external-only
+# device: netlab generates the addressing plan + config artifact but never deploys it
+# (provider: external — https://netlab.tools/labs/external/). Drop an `e6000` node with
+# `provider: external` into any topology to configure the physical CMTS alongside virtual (clab) NOS
+# nodes from ONE netlab YAML.
+#
+# NETWORK-SIDE (NSI) config = standard router/switch, driven by netlab's existing modules but rendered
+# to the E6000's Arris CLI (grounded in wiki/okf/e6000-9.0/cli-ref + the FRCYNC-CM01 reference config).
+# The E6000 CLI is FLATTER and more different from Casa than vCCAP: interface bodies are hierarchical
+# `interface X` / one-space body / `exit` blocks (WITH `no shutdown` printed), routing protocols are
+# scoped `router <proto> vrf default`, IS-IS interface commands take NO instance tag and carry a
+# per-level `level-1|level-2` suffix, and static routes are dotted-mask `ip route ... admin-dist ...`.
+# DOCSIS access-side = the custom `docsis` module (owned separately) — this branch is NSI only.
+# Contribution ledger: RocContLab docs/netlab-fork.md.
+
+description: Arris/Aurora E6000 CER CMTS (external / hardware-only)
+
+interface_name: ethernet 6/{ifindex}      # E6000 `interface ethernet <slot>/<port>`; slots 6/7 are the
+                                          # RSM 10G NSI ports. Placeholder slot 6 — for real HW set the
+                                          # per-link `ifname` (e.g. "ethernet 7/5").
+loopback_interface_name: loopback {ifindex}
+mgmt_if: mgmt 6/0                          # E6000 out-of-band mgmt port `interface mgmt <slot>/<port>`
+
+clab:
+  image: none                            # placeholder image — CMTS is `unmanaged` (never deployed by netlab)
+libvirt:
+  image: none
+external:
+  image: none                            # external config-gen mode
+
+group_vars:
+  ansible_network_os: e6000              # selects the netsim/ansible/templates/*/e6000.j2 render path
+  ansible_connection: network_cli        # E6000 CLI over SSH (used ONLY if pushing to real HW)
+  netlab_device_type: e6000
+
+# DEVICE-SCOPED NSI attributes (mirrors the Casa approach): E6000-specific knobs the core `initial`
+# model doesn't carry, declared under the device so they validate ONLY on e6000 nodes (never pollute
+# the shared/portable model) and render via the e6000 templates. Preferred over verbatim configlets:
+# proprietary config becomes validated structured data. (Grounded in the FRCYNC-CM01 reference config.)
+attributes:
+  interface:
+    # --- E6000 physical Ethernet knobs (interface ethernet <slot>/<port>) ---
+    speed:          str          # `speed 10G` (port speed)
+    fec:            str          # `fec auto` (forward error correction mode)
+    flowcontrol_send:    str     # `flowcontrol send {on|off}`
+    flowcontrol_receive: str     # `flowcontrol receive {on|off}`
+    # --- link-aggregate (LAG) membership + bundle knobs ---
+    # netlab's lag module is LINK-based (bundle between two lab nodes); a CMTS LAG bundles local ports
+    # toward an EXTERNAL router, so — like the BGP external peers — membership rides a device attribute.
+    link_aggregate: int          # member: `link-aggregate <n>` under an ethernet interface
+    min_links:      int          # bundle: `min-links <n>`
+    lacp:                        # bundle: `lacp enable` / `lacp mode <active|passive>` / `lacp timeout <slow|fast>`
+      type: dict
+      _keys: { enable: bool, mode: str, timeout: str }
+    encapsulation:  str          # `encapsulation dot1q` / `no encapsulation` on a sub-interface
+    # --- interface tail (no netlab-core equivalent) ---
+    inband_access_group: int     # `ip inband access-group <n>`
+    gratuitous_arp:      bool     # `no gratuitous-arp` when False
+    ipv6_enable:         bool     # `ipv6 enable`
+    secondary_ipv4: { type: list, _subtype: { type: ipv4, use: subnet } }   # additional `ip address ...`
+  node:
+    # External/static BGP peers (real routers — upstream ISPs, route reflectors — never lab nodes),
+    # so netlab's topology-derived `bgp.neighbors` cannot carry them. Device-scoped so it lives only on
+    # e6000. Rendered by bgp/e6000.j2. Plus E6000 BGP process flags not in netlab's bgp model.
+    e6000_bgp:
+      type: dict
+      _keys:
+        ext_neighbors:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              ipv4:        { type: ipv4, use: address }
+              ipv6:        { type: ipv6, use: address }
+              remote_as:   { type: int, _required: True }
+              description: str
+              update_source: str
+              advertisement_interval: int
+              next_hop_self: bool
+              route_map_in:  str
+              route_map_out: str
+        redistribute:    { type: list, _subtype: { type: str } }   # AF `redistribute {connected|static}`
+        default_local_preference: int
+        maximum_paths:  { type: dict, _keys: { ebgp: int, ibgp: int } }
+        deterministic_med: bool
+    # Route-maps (E6000 uses `route-map <name> <permit|deny> <seq>` + `match ip address prefix-list`,
+    # `set community [add] <c>`, `set local-preference <n>`, `set origin <o>`, `continue <seq>`). netlab
+    # routing.policy is thinner, so route-maps ride a complete device-scoped node attribute.
+    e6000_route_maps:
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          name:          { type: str, _required: True }
+          sequence:      int
+          action:        str
+          match_prefix:  str
+          set_locpref:   int
+          set_community: { type: list, _subtype: { type: str } }
+          set_community_add: bool
+          set_origin:    str
+          continue_seq:  int
+    # Static routes. netlab routing.static carries prefix/nexthop/discard but NOT the E6000 admin-dist
+    # or metric, so device-scoped (admin distance = route preference, matters).
+    e6000_static_routes:
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          prefix:     { type: str, _required: True }   # dotted `A.B.C.D`
+          mask:       { type: str, _required: True }   # dotted `A.B.C.D`
+          nexthop:    str                              # dotted next-hop; omit for a null route
+          null_route: bool                             # `null 0` black-hole
+          admin_dist: int
+          metric:     int
+          vrf:        str
+
+features:
+  initial:
+    ipv4: True
+    ipv6: True
+  # Network-side (NSI) modules — declared per the E6000 CLI reference + the FRCYNC-CM01 reference config.
+  ospf:
+    # E6000 CLI Ch.2. OSPFv2 = `router ospf <pid> [vrf <VRF>]` + `network <ip> <mask> area <a>`
+    # statements + router-mode router-id/passive-interface; interface `ip ospf cost|priority|network`.
+    # OSPFv3 = `ipv6 router ospf` + interface `ipv6 ospf area`. GROUNDED IN CLI REF (not in the
+    # reference config, which runs IS-IS) — rendered but not reference-verified.
+    priority: true
+  isis:
+    # E6000 CLI Ch.2 + reference config. `router isis vrf default` / net / is-type / metric-style wide
+    # / address-family {ipv4|ipv6}; interface `ip|ipv6 router isis` (NO tag), `isis network
+    # point-to-point`, `isis metric <n> [level-1|level-2]`, `isis wide-metric`, `isis circuit-type`,
+    # `isis priority`. Reference-verified (link-aggregate 6.0/7.0).
+    circuit_type: true
+  bgp:
+    # E6000 CLI Ch.2 + reference config. `router bgp vrf default <as>` / `bgp router-id`;
+    # `neighbor <ip> remote-as|update-source|advertisement-interval`; indented `address-family
+    # {ipv4|ipv6}` with `redistribute`, `neighbor activate|next-hop-self|route-map ... out|no
+    # prefix-list ...`. Reference-verified (neighbors .15/.16).
+    activate_af: true
+    advertise: true
+  vrf:
+    # E6000 CLI Ch.2. `ip vrf <name> [ospf|rip]`; interface `ip vrf forwarding <name>`. The reference
+    # config only uses `vrf default`; custom-VRF RD/RT modeling is CLI-ref-grounded, not
+    # reference-verified.
+    ospfv2: false
+    ospfv3: false
+    bgp: false
+  routing:
+    # E6000 CLI Ch.2 + reference config. Static: `router static vrf default distance <n>` header +
+    # `ip route <dest> <mask> {<nh>|null 0} [admin-dist <n>] [metric <n>] [vrf <v>]`. prefix-lists:
+    # `ip prefix-list <name> seq <n> {permit|deny} <cidr> [ge <n>] [le <n>]`. Reference-verified.
+    static:
+      vrf: true          # ip route ... vrf <name>
+      discard: true      # null 0 black-hole
+    prefix: True         # ip prefix-list (routing.prefix)
+  mpls:
+    # E6000 CLI Ch.2 + reference config. Global `mpls ldp` process (timers/holdtime/shutdown) +
+    # interface `mpls ip` / `no mpls ip`. LDP only. Reference-verified (mpls ldp block present).
+    ldp: true
+  ripv2:
+    # E6000 CLI Ch.2. IPv4 RIP via `router rip [vrf <v>]` + `network <A.B.C.D>` statements + passive.
+    # GROUNDED IN CLI REF (not in the reference config) — rendered but not reference-verified.
+    ipv4: true
+    passive: true

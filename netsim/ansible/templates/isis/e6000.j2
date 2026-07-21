@@ -1,0 +1,60 @@
+{#
+  Arris E6000 CER IS-IS (RocContLab, E6000 CLI Ch.2 + FRCYNC-CM01 reference config).
+    process:   router isis vrf default / net <nsap> / is-type <lvl> / metric-style wide /
+               hostname <name> dynamic / passive-interface <type> <id> /
+               address-family {ipv4|ipv6} -> enable -> exit / no shutdown / exit
+    interface: ip router isis  (NO instance tag — E6000-ism, unlike Casa's `ip router isis <tag>`) /
+               ipv6 router isis / isis network point-to-point / isis circuit-type <lvl> /
+               isis metric <n> {level-1|level-2} (per-level suffix — E6000-ism) / isis priority <n> <lvl>
+  netlab model: node isis.{instance,net,type,af}; per-if l.isis.{network_type,type,metric,cost,
+  bfd,passive}. E6000 uses `level-1|level-2|level-1-2` tokens directly (no Casa `level-2-only` remap).
+#}
+{% set proc_type = isis.type|default('level-1-2') %}
+{# ---- interface enablement + tuning ---- #}
+{% for l in netlab_interfaces|default([]) if 'isis' in l %}
+{% set iftype = l.isis.type|default(proc_type) %}
+{% set levels = ['level-1','level-2'] if iftype == 'level-1-2' else [iftype] %}
+interface {{ l.ifname }}
+{% if ('ipv4' in l) and 'ipv4' in isis.af %}
+ ip router isis
+{% endif %}
+{% if ('ipv6' in l) and 'ipv6' in isis.af %}
+ ipv6 router isis
+{% endif %}
+{% if l.isis.network_type|default('') == 'point-to-point' and l.type not in ['loopback','tunnel'] %}
+ isis network point-to-point
+{% endif %}
+{% if l.isis.type is defined %}
+ isis circuit-type {{ l.isis.type }}
+{% endif %}
+{% if l.isis.metric is defined or l.isis.cost is defined %}
+{% for lvl in levels %}
+ isis metric {{ l.isis.metric|default(l.isis.cost) }} {{ lvl }}
+{% endfor %}
+{% endif %}
+{% if l.isis_priority is defined %}
+{% for lvl in levels %}
+ isis priority {{ l.isis_priority }} {{ lvl }}
+{% endfor %}
+{% endif %}
+exit
+{% endfor %}
+{# ---- process ---- #}
+router isis vrf default
+ net {{ isis.net }}
+ is-type {{ proc_type }}
+ metric-style wide {{ proc_type }}
+ hostname {{ inventory_hostname.replace("_","-") }} dynamic
+{% for l in netlab_interfaces|default([]) if 'isis' in l and l.isis.passive|default(False) %}
+ passive-interface {{ l.ifname }}
+{% endfor %}
+ address-family ipv4
+  enable
+ exit
+{% if isis.af.ipv6 is defined %}
+ address-family ipv6
+  enable
+ exit
+{% endif %}
+ no shutdown
+exit

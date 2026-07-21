@@ -1,0 +1,26 @@
+{#
+  Arris E6000 CER VRF (RocContLab, E6000 CLI Ch.2).
+    definition: ip vrf <name> [ospf | rip]     (E6000 VRF-lite — the `ip vrf` command has NO RD/RT;
+                                                L3VPN RD/RT are not expressed here, unlike Casa)
+    interface:  ip vrf forwarding <name>
+  netlab model: node `vrfs: {<name>: {af, ospf, ...}}`; interfaces carry `l.vrf`. The reference config
+  only exercises `vrf default`; custom-VRF definitions are CLI-ref-grounded, not reference-verified.
+  `ip vrf forwarding` clears the interface IP on E6000, so binding + (re)addressing are emitted together
+  here (netlab's initial render addresses in the default table; this rebinds VRF interfaces).
+#}
+{% for vname, vdata in vrfs.items() %}
+{% set igp = ' ospf' if vdata.ospf is defined else (' rip' if vdata.rip is defined else '') %}
+ip vrf {{ vname }}{{ igp }}
+{% endfor %}
+{% for l in netlab_interfaces|default([]) if l.vrf is defined %}
+interface {{ l.ifname }}
+ ip vrf forwarding {{ l.vrf }}
+{% if 'ipv4' in l and l.ipv4 is string %}
+ ip address {{ l.ipv4|ansible.utils.ipaddr('address') }} {{ l.ipv4|ansible.utils.ipaddr('netmask') }}
+{% endif %}
+{% if 'ipv6' in l and l.ipv6 is string %}
+ ipv6 enable
+ ipv6 address {{ l.ipv6 }}
+{% endif %}
+exit
+{% endfor %}

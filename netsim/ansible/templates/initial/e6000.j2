@@ -1,0 +1,74 @@
+{#
+  Arris E6000 CER initial config (RocContLab #48/#53 peer). system hostname + per-interface addressing +
+  device-scoped NSI knobs (speed/fec/flowcontrol/link-aggregate/lacp/min-links/encapsulation +
+  inband-acl/gratuitous-arp/secondaries — declared in devices/e6000.yml). External device; netlab
+  renders the artifact, never deploys.
+
+  E6000 interface style (from FRCYNC-CM01 reference config): hierarchical `interface <type> <id>` /
+  one-space body / `exit` (NOT Casa's `!`); IPv4 = dotted netmask; `ipv6 enable` gates v6; IPv6 addr =
+  CIDR; every active interface — loopback included — prints `no shutdown`. netlab_interfaces =
+  [loopback] + interfaces (loopback first); mgmt is NOT in the list (lives in `mgmt`).
+#}
+hostname "{{ inventory_hostname.replace("_","-") }}"
+!
+{% for l in netlab_interfaces %}
+interface {{ l.ifname }}
+{% if l.name is defined %}
+ description "{{ l.name }}{{ " ["+l.role+"]" if l.role is defined else "" }}"
+{% endif %}
+{% if l.speed is defined %}
+ speed {{ l.speed }}
+{% endif %}
+{% if l.fec is defined %}
+ fec {{ l.fec }}
+{% endif %}
+{% if l.flowcontrol_send is defined %}
+ flowcontrol send {{ l.flowcontrol_send }}
+{% endif %}
+{% if l.flowcontrol_receive is defined %}
+ flowcontrol receive {{ l.flowcontrol_receive }}
+{% endif %}
+{% if l.encapsulation is defined %}
+ {{ 'no encapsulation' if l.encapsulation in ['none','no'] else 'encapsulation ' + l.encapsulation }}
+{% endif %}
+{% if "ipv4" in l and l.ipv4 is string %}
+ ip address {{ l.ipv4|ansible.utils.ipaddr("address") }} {{ l.ipv4|ansible.utils.ipaddr("netmask") }}
+{% endif %}
+{% for s in l.secondary_ipv4|default([]) %}
+ ip address {{ s|ansible.utils.ipaddr("address") }} {{ s|ansible.utils.ipaddr("netmask") }} secondary
+{% endfor %}
+{% if l.ipv6_enable|default(False) or ("ipv6" in l and l.ipv6 is string) %}
+ ipv6 enable
+{% endif %}
+{% if "ipv6" in l and l.ipv6 is string %}
+ ipv6 address {{ l.ipv6 }}
+{% endif %}
+{% if l.vrf is defined %}
+ ip vrf forwarding {{ l.vrf }}
+{% endif %}
+{% if l.link_aggregate is defined %}
+ link-aggregate {{ l.link_aggregate }}
+{% endif %}
+{% if l.min_links is defined %}
+ min-links {{ l.min_links }}
+{% endif %}
+{% if l.lacp is defined %}
+{% if l.lacp.enable|default(False) %}
+ lacp enable
+{% endif %}
+{% if l.lacp.mode is defined %}
+ lacp mode {{ l.lacp.mode }}
+{% endif %}
+{% if l.lacp.timeout is defined %}
+ lacp timeout {{ l.lacp.timeout }}
+{% endif %}
+{% endif %}
+{% if l.gratuitous_arp is defined and not l.gratuitous_arp %}
+ no gratuitous-arp
+{% endif %}
+{% if l.inband_access_group is defined %}
+ ip inband access-group {{ l.inband_access_group }}
+{% endif %}
+ no shutdown
+exit
+{% endfor %}

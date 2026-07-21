@@ -1,0 +1,71 @@
+{#
+  Arris E6000 CER OSPF (RocContLab, E6000 CLI Ch.2).
+    OSPFv2:  router ospf <pid> vrf default -> router-id <id> / network <ip> <mask> area <a> /
+             passive-interface <type> <id>; interface `ip ospf {network|cost|priority}`.
+    OSPFv3:  ipv6 router ospf <pid> vrf default -> router-id <id>; interface `ipv6 ospf area <a>`
+             (+ `ipv6 ospf {cost|network}`).
+  Like Casa, OSPFv2 joins interfaces via router-mode `network <ip> <mask> area` statements. E6000 uses a
+  DOTTED netmask in the network statement.
+  NOTE: the reference config runs IS-IS, not OSPF, so this template is CLI-ref-grounded (E6000 CLI Ch.2)
+  and NOT reference-config-verified. netlab model: node ospf.{process,router_id,af}; per-if
+  l.ospf.{area,network_type,cost,priority,passive}.
+#}
+{% set pid = ospf.process|default(1) %}
+{# ---- per-interface OSPF settings ---- #}
+{% for l in netlab_interfaces|default([]) if 'ospf' in l %}
+{% set v6 = 'ipv6' in l and 'ipv6' in ospf.af %}
+{% set is_phys = l.type not in ['loopback','tunnel'] %}
+{% set emit_if = (l.ospf.network_type is defined and is_phys) or l.ospf.cost is defined
+                 or (l.ospf.priority is defined and is_phys) or v6 %}
+{% if emit_if %}
+interface {{ l.ifname }}
+{% if l.ospf.network_type is defined and is_phys %}
+{% if 'ipv4' in l and 'ipv4' in ospf.af %}
+ ip ospf network {{ l.ospf.network_type }}
+{% endif %}
+{% if 'ipv6' in l and 'ipv6' in ospf.af %}
+ ipv6 ospf network {{ l.ospf.network_type }}
+{% endif %}
+{% endif %}
+{% if l.ospf.cost is defined %}
+{% if 'ipv4' in l and 'ipv4' in ospf.af %}
+ ip ospf cost {{ l.ospf.cost }}
+{% endif %}
+{% if 'ipv6' in l and 'ipv6' in ospf.af %}
+ ipv6 ospf cost {{ l.ospf.cost }}
+{% endif %}
+{% endif %}
+{% if l.ospf.priority is defined and is_phys and 'ipv4' in l and 'ipv4' in ospf.af %}
+ ip ospf priority {{ l.ospf.priority }}
+{% endif %}
+{% if v6 %}
+ ipv6 ospf area {{ l.ospf.area }}
+{% endif %}
+exit
+{% endif %}
+{% endfor %}
+{# ---- OSPFv2 (IPv4): router mode + network statements ---- #}
+{% if 'ipv4' in ospf.af %}
+router ospf {{ pid }} vrf default
+{% if ospf.router_id is defined %}
+ router-id {{ ospf.router_id }}
+{% endif %}
+{% for l in netlab_interfaces|default([]) if 'ospf' in l and 'ipv4' in l and l.ipv4 is string %}
+ network {{ l.ipv4|ansible.utils.ipaddr('network') }} {{ l.ipv4|ansible.utils.ipaddr('hostmask') }} area {{ l.ospf.area }}
+{% endfor %}
+{% for l in netlab_interfaces|default([]) if 'ospf' in l and l.ospf.passive|default(False) %}
+ passive-interface {{ l.ifname }}
+{% endfor %}
+exit
+{% endif %}
+{# ---- OSPFv3 (IPv6): router mode (interfaces enabled above) ---- #}
+{% if 'ipv6' in ospf.af %}
+ipv6 router ospf {{ pid }} vrf default
+{% if ospf.router_id is defined %}
+ router-id {{ ospf.router_id }}
+{% endif %}
+{% for l in netlab_interfaces|default([]) if 'ospf' in l and 'ipv6' in l and l.ospf.passive|default(False) %}
+ passive-interface {{ l.ifname }}
+{% endfor %}
+exit
+{% endif %}

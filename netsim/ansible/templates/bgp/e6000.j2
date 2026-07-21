@@ -1,0 +1,89 @@
+{#
+  Arris E6000 CER BGP (RocContLab, E6000 CLI Ch.2 + FRCYNC-CM01 reference config).
+    router bgp vrf default <as>     (E6000 scopes BGP to a VRF; the global table = `vrf default`)
+     bgp router-id <id>
+     neighbor <peer> remote-as <as> | update-source <if> | advertisement-interval <n>
+     no shutdown
+     address-family {ipv4|ipv6}     (INDENTED sub-block, 2-space body)
+      redistribute {connected|static}
+      network <cidr>
+      neighbor <peer> activate | next-hop-self | route-map <name> {in|out}
+     exit
+    exit
+  IPv6 unicast is activated with a top-level one-liner `address-family ipv6 enable` too. netlab model:
+  node bgp.{as,router_id,neighbors[],advertise[],ipv4,ipv6}; neighbor n.{name,as,ipv4,ipv6,type,
+  activate}. External/static peers ride device-scoped `e6000_bgp.ext_neighbors` (real routers, not lab
+  nodes). Process knobs (default-local-pref / maximum-paths / deterministic-med / redistribute) ride
+  `e6000_bgp`.
+#}
+router bgp vrf default {{ bgp.as }}
+{% if bgp.router_id is defined %}
+ bgp router-id {{ bgp.router_id }}
+{% endif %}
+{% if e6000_bgp.default_local_preference is defined %}
+ bgp default local-preference {{ e6000_bgp.default_local_preference }}
+{% endif %}
+{% if e6000_bgp.deterministic_med|default(False) %}
+ bgp deterministic-med
+{% endif %}
+{% if e6000_bgp.maximum_paths is defined %}
+ maximum-paths {{ e6000_bgp.maximum_paths.ebgp|default(1) }}{{ ' ibgp '+e6000_bgp.maximum_paths.ibgp|string if e6000_bgp.maximum_paths.ibgp is defined else '' }}
+{% endif %}
+{% if bgp.ipv6 is defined %}
+ address-family ipv6 enable
+{% endif %}
+ no shutdown
+{# ---- global (topology-derived) neighbors: one line per address family ---- #}
+{% for n in bgp.neighbors %}
+{% for af in ['ipv4','ipv6'] if n[af] is defined and n[af] is string %}
+ neighbor {{ n[af] }} remote-as {{ n.as }}
+{% if n.type|default('') == 'ibgp' and loopback is defined %}
+ neighbor {{ n[af] }} update-source {{ loopback.ifname }}
+{% endif %}
+{% endfor %}
+{% endfor %}
+{# ---- external/static peers (device-scoped e6000_bgp.ext_neighbors) ---- #}
+{% for n in e6000_bgp.ext_neighbors|default([]) %}
+{% set peer = n.ipv4|default(n.ipv6) %}
+ neighbor {{ peer }} remote-as {{ n.remote_as }}
+{% if n.description is defined %}
+ neighbor {{ peer }} description "{{ n.description }}"
+{% endif %}
+{% if n.update_source is defined %}
+ neighbor {{ peer }} update-source {{ n.update_source }}
+{% endif %}
+{% if n.advertisement_interval is defined %}
+ neighbor {{ peer }} advertisement-interval {{ n.advertisement_interval }}
+{% endif %}
+{% endfor %}
+{# ---- address families (indented sub-blocks) ---- #}
+{% for af in ['ipv4','ipv6'] if bgp[af] is defined %}
+ address-family {{ af }}
+{% for r in e6000_bgp.redistribute|default([]) if af == 'ipv4' %}
+  redistribute {{ r }}
+{% endfor %}
+{% for pfx in bgp.advertise|default([]) if af in pfx %}
+  network {{ pfx[af] }}
+{% endfor %}
+{% for n in bgp.neighbors if n.activate[af]|default(False) and n[af] is string %}
+  neighbor {{ n[af] }} activate
+{% if n.type|default('') == 'ibgp' %}
+  neighbor {{ n[af] }} next-hop-self
+{% endif %}
+{% endfor %}
+{% for n in e6000_bgp.ext_neighbors|default([]) if (af == 'ipv4' and n.ipv4 is defined) or (af == 'ipv6' and n.ipv6 is defined) %}
+{% set peer = n.ipv4 if af == 'ipv4' else n.ipv6 %}
+  neighbor {{ peer }} activate
+{% if n.next_hop_self|default(False) %}
+  neighbor {{ peer }} next-hop-self
+{% endif %}
+{% if n.route_map_in is defined %}
+  neighbor {{ peer }} route-map {{ n.route_map_in }} in
+{% endif %}
+{% if n.route_map_out is defined %}
+  neighbor {{ peer }} route-map {{ n.route_map_out }} out
+{% endif %}
+{% endfor %}
+ exit
+{% endfor %}
+exit

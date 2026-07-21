@@ -1,0 +1,24 @@
+{#
+  Arris E6000 CER MPLS / LDP (RocContLab, E6000 CLI Ch.2 + FRCYNC-CM01 reference config).
+    global:    mpls ldp                       (LDP process block; reference carries it, admin `shutdown`)
+    interface: mpls ip                         (enable LDP on the link; reference shows `no mpls ip`)
+  E6000 has an `mpls ldp` process block (with graceful-restart/discovery/holdtime timers) rather than
+  Casa's `router ldp`; per-interface LDP is a bare `mpls ip`. LDP only (no BGP-LU/6PE), like Casa.
+  netlab model: LDP is per-interface (`l.ldp`, truthy when LDP runs on the link).
+  NOTE: the reference box has LDP administratively shut + `no mpls ip`, so the ENABLED path here is
+  CLI-grammar-grounded (the `mpls ldp` block + interface `mpls ip` command), not run-state-verified.
+#}
+{% set ns = namespace(any=false) %}
+{% for l in netlab_interfaces|default([]) if l.ldp is defined and l.type not in ['loopback','tunnel'] %}
+{% set ns.any = true %}
+{% endfor %}
+{% if ns.any %}
+mpls ldp
+ no shutdown
+exit
+{% for l in netlab_interfaces|default([]) if l.ldp is defined and l.type not in ['loopback','tunnel'] %}
+interface {{ l.ifname }}
+ mpls ip
+exit
+{% endfor %}
+{% endif %}
