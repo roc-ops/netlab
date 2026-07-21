@@ -28,11 +28,6 @@ group_vars:
   netlab_ready: [ ansible ]
   netlab_check_retries: 60      # OcNOS vrnetlab boots ~9 min; default 20x5=100s is far too
   netlab_check_delay: 12        # short, so config-deploy SSH-times-out. 60x12 = 720s wait.
-  # Validation/show transport: OcNOS cmlsh has no non-interactive exec, so `netlab validate`
-  # (and `netlab connect --show`) run show commands through the ipinfusion.ocnos Ansible
-  # module instead of raw SSH. Interactive `netlab connect` still uses SSH (see clab.group_vars).
-  netlab_validate_transport: ansible
-  netlab_validate_ansible_module: ipinfusion.ocnos.ocnos_command
   collections:
   - ipinfusion.ocnos
 features:

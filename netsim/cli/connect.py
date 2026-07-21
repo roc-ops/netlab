@@ -4,8 +4,6 @@
 # Connect to a lab device using SSH or Docker
 #
 import argparse
-import json
-import subprocess
 import sys
 import typing
 from enum import IntEnum
@@ -171,71 +169,6 @@ def create_command_list(host: Box, args: argparse.Namespace, rest: list) -> list
   else:
     return rest
 
-def ansible_connect(
-      data: Box,
-      p_args: argparse.Namespace,
-      rest: typing.List[str],
-      log_level: LogLevel = LogLevel.INFO) -> typing.Union[bool,int,str]:
-  #
-  # A non-interactive connection transport -- the Ansible peer of docker_connect
-  # (docker-exec) and ssh_connect -- for devices whose management CLI has no
-  # non-interactive exec mode (e.g. OcNOS cmlsh, which rejects `ssh node "show ..."`).
-  # It drives the show/exec through an Ansible module (network_cli). Used ONLY for
-  # command/show execution; an interactive `netlab connect` login still uses the
-  # device's console connection (SSH -> cmlsh).
-  #
-  # The device declares:
-  #   netlab_validate_transport: ansible
-  #   netlab_validate_ansible_module: <module>   # e.g. ipinfusion.ocnos.ocnos_command
-  # We run the ad-hoc module from the lab directory (netlab-generated hosts.yml +
-  # ansible.cfg) and return the joined CLI text so a plugin valid_ function can parse it.
-  #
-  module = data.netlab_validate_ansible_module
-  if not module:
-    log.fatal(
-      f"Device {data.host}: netlab_validate_transport=ansible requires netlab_validate_ansible_module",
-      module="connect")
-  host = data.inventory_hostname or data.host
-  command = " ".join(rest)
-  c_args = [ "ansible", host, "-m", str(module), "-a", "commands=%r" % command, "--one-line" ]
-
-  if log_level == LogLevel.DRY_RUN:
-    print(f"DRY RUN: {c_args}")
-    return True
-  if log_level != LogLevel.NONE:
-    sys.stderr.write(f"Running {command!r} on {host} via Ansible ({module})\n")
-    sys.stderr.flush()
-  if getattr(p_args,"verbose",0) and p_args.verbose >= 2:
-    sys.stderr.write("Executing: " + " ".join(c_args) + "\n")
-
-  need_output = "output" in p_args and p_args.output
-  try:
-    proc = subprocess.run(c_args,capture_output=True,text=True)
-  except Exception as ex:                                   # noqa: BLE001
-    log.error(f"Ansible transport failed for {command!r} on {host}: {ex}",module="connect")
-    return False
-
-  raw = proc.stdout or ""
-  # ansible --one-line: "<host> | SUCCESS => { ...json... }" (or FAILED!/UNREACHABLE!)
-  if " => " not in raw:
-    if need_output:
-      return False
-    sys.stderr.write(raw)
-    return proc.returncode == 0
-  status, _, payload = raw.partition(" => ")
-  try:
-    j = json.loads(payload)
-  except Exception:                                         # noqa: BLE001
-    return False if need_output else False
-  out = j.get("stdout","")
-  text = "\n".join(out) if isinstance(out,list) else str(out)
-  ok = "SUCCESS" in status
-  if need_output:
-    return text if ok else (text or False)
-  print(text)
-  return ok
-
-
 def connect_to_node(      
       node: str, 
       args: argparse.Namespace,
@@ -252,10 +185,6 @@ def connect_to_node(
 
   rest = create_command_list(host_data,args,rest)
 
-  # Ansible transport: only for non-interactive command/show execution (rest is set).
-  # Interactive login (no command) still uses the console connection below.
-  if host_data.netlab_validate_transport == 'ansible' and rest:
-    return ansible_connect(host_data,args,rest,log_level)
   if connection == 'docker':
     return docker_connect(host_data,args,rest,log_level)
   elif connection in ['paramiko','ssh','network_cli','netconf','httpapi'] or not connection:
