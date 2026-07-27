@@ -15,7 +15,10 @@ feature streaming-telemetry vrf management
 !
 netconf translation openconfig
 !
-hostname {{ inventory_hostname }}
+{# OcNOS rejects a hostname containing an underscore (%% Invalid Hostname.), and netlab node
+   names may legally contain one (dut_c, dut_s1). Same substitution eleven other in-tree devices
+   already make -- see the note in docs; this is a device workaround for a core-supplied value. #}
+hostname {{ inventory_hostname.replace("_","-") }}
 !
 {% if vrfs is defined %}
 {% for vname, vdata in vrfs.items() %}
