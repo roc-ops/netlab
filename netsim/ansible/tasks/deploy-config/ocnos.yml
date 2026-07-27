@@ -42,6 +42,7 @@
     ocnos_benign_commit:
     - 'Use "clear ip ospf process" command to take effect'
     - '%% Use clear ipv6 ospf process command to take effect'
+    - "%% Use 'clear ldp session' command to take effect"
   failed_when: >-
     ocnos_commit is failed and
     ( ocnos_commit.msg | default('') | string
