@@ -5,6 +5,29 @@
 # non-interactive exec mode, so raw SSH command push (paramiko/netmiko) does not
 # work; this collection ships the cliconf/terminal plugins that drive cmlsh
 # interactively. Requires: ansible-galaxy collection install ipinfusion.ocnos
+# OcNOS returns an INFORMATIONAL notice on the commit that follows an OSPF
+# network/area membership change, and ocnos_config treats any non-empty commit
+# response as a task failure -- which aborts the rest of that node's play, so every
+# module queued after ospf (isis, bgp, vrf ...) is silently skipped. The
+# configuration itself is accepted; only the notice is returned.
+#
+# The two notices seen are listed below. Note that the IPv6 one begins with '%%',
+# the same marker OcNOS uses for real errors, so "does it contain %%" is NOT a safe
+# discrimination.
+#
+# Rather than match the notices and pass, this SUBTRACTS them: the commit transcript
+# has the bytes-repr wrapper stripped, the literal \r / \n escapes turned into real
+# newlines, and then the blank lines, the echoed 'commit', the trailing CLI prompt and
+# the known notices removed. If ANYTHING is left, the task still fails. A real error
+# therefore cannot be masked -- not even when it arrives in the same transcript as a
+# benign notice.
+#
+# Validated offline against every ocnos_config failure the baseline suite produced
+# (22 messages): the 6 OSPF-notice cases yield an empty residue, and all 16 genuine
+# failures -- invalid hostname, L2/L3 mode on an aggregator, IPv6 loopback overlap,
+# invalid area-range cost, missing link-local -- yield a non-empty one. Two adversarial
+# cases were checked too: a transcript carrying the benign notice AND a real error still
+# fails, and the notice with a different device prompt is still recognised.
 - name: "ocnos_config: deploying {{ netsim_action | default('config') }} from {{ config_template }}"
   ipinfusion.ocnos.ocnos_config:
     src: "{{ config_template }}"
@@ -14,4 +37,17 @@
     # re-deploys. Our templates are written to be re-runnable, so verbatim is
     # correct.
     match: none
+  register: ocnos_commit
+  vars:
+    ocnos_benign_commit:
+    - 'Use "clear ip ospf process" command to take effect'
+    - '%% Use clear ipv6 ospf process command to take effect'
+  failed_when: >-
+    ocnos_commit is failed and
+    ( ocnos_commit.msg | default('') | string
+      | regex_replace('^b[\'"]', '') | regex_replace('[\'"]$', '')
+      | regex_replace('\\\\r', '\n') | regex_replace('\\\\n', '\n')
+    ).split('\n') | map('trim') | list
+      | difference(ocnos_benign_commit + ['', 'commit'])
+      | reject('search', '[#>]$') | list | length > 0
   tags: [ print_action, always ]
