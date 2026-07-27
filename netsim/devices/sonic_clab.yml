@@ -134,6 +134,7 @@ features:
   routing:
     static:
       vrf: true
+      inter_vrf: true
       discard: true        # Null0 blackhole (backs bgp.originate)
     prefix: true
     aspath: true
