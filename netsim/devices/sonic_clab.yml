@@ -146,6 +146,9 @@ features:
         aspath: true
         community:
           standard: true
+          large: true
+      delete:
+        community: clist
       set:
         locpref: true
         med: true
@@ -153,6 +156,8 @@ features:
         weight: true
         community:
           standard: true
+          large: true
+          append: true
   vxlan: true              # L2VNI via FRR/kernel path (orchagent can't program the VS dataplane)
   evpn:
     transport: [ vxlan, mpls ]
