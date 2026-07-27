@@ -31,7 +31,14 @@ def exec_ping(
     cmd += ' -I '+src.split('/')[0]
 
   cmd += ' '+host
-  cmd += ' || true'
+  #
+  # Merge stderr into stdout. 'ping' reports a missing route on stderr, not stdout
+  # ("ping: sendto: Network unreachable" on busybox, "connect: Network is unreachable" on
+  # iputils), and busybox prints no statistics block at all in that case. The validation
+  # harness collects stdout only, so without this redirect valid_ping() sees nothing but the
+  # "PING host (addr)" banner and an expect='fail' test can never observe the failure.
+  #
+  cmd += ' 2>&1 || true'
   return cmd
 
 '''
@@ -68,6 +75,9 @@ def valid_ping(
     msg += f' size {pkt_len}'
 
   if expect == 'fail':
+    # 'unreachable' now also matches the stderr text merged in by exec_ping. The success
+    # branch below is unaffected: a successful ping writes nothing to stderr, and it is
+    # keyed on "<len> bytes from", which no error message can produce.
     for kw in ("0 packets received","0 received","unreachable"):
       if kw in _result.stdout:
         return msg+' failed as expected'
