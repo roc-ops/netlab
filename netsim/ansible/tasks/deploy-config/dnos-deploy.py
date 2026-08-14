@@ -25,6 +25,11 @@ import pexpect
 PROMPT_OPER = r"[\w.-]+# "
 PROMPT_CFG  = r"[\w.-]+\(cfg\)# "
 CONFIRM     = r"\(yes/no\)\s*\[no\]\?"
+# The DNOS CLI paginates. Show commands below use "| no-more", but match the pager too as a
+# safety net: an unmatched "-- More --" hangs the session until timeout, and the timeout
+# path used to exit WITHOUT rolling back, stranding a loaded candidate in an open config
+# session on the router.
+PAGER       = r"-- (More|End) -- \(Press q to quit\)"
 ERROR_PAT   = re.compile(r"ERROR|Invalid command|Unknown word|failed|Failed", re.I)
 NOOP_PAT    = re.compile(r"no configuration changes were made", re.I)
 
@@ -43,12 +48,15 @@ def send(child, line: str, expect_pat: str, timeout: int = 120) -> str:
   child.sendline(line)
   out = ""
   while True:
-    i = child.expect([ CONFIRM, expect_pat, pexpect.TIMEOUT, pexpect.EOF ], timeout=timeout)
+    i = child.expect([ CONFIRM, PAGER, expect_pat, pexpect.TIMEOUT, pexpect.EOF ], timeout=timeout)
     out += child.before or ""
     if i == 0:                      # a confirmation prompt -- answer it, keep reading
       child.sendline("yes")
       continue
-    if i == 1:
+    if i == 1:                      # the pager -- page through rather than hang
+      child.send(" ")
+      continue
+    if i == 2:
       return out
     sys.exit(f"dnos-deploy: timeout/EOF waiting for prompt after {line!r}\n--- got ---\n{out}")
 
@@ -75,11 +83,26 @@ def main() -> None:
   child.expect(PROMPT_OPER,timeout=180)          # wait out "DRIVENETS CLI Loading..."
 
   send(child,"configure",PROMPT_CFG)
+
+  def bail(msg: str) -> None:
+    """Discard the candidate and leave config mode before dying.
+
+    Bailing out without this leaves netlab's candidate loaded in an open config session on the
+    router, where the next operator to enter configuration mode inherits it.
+    """
+    try:
+      send(child,"rollback 0",PROMPT_CFG,timeout=60)
+      child.sendline("exit")
+      child.close(force=True)
+    except Exception:                          # noqa: BLE001 - best effort; the message matters more
+      pass
+    sys.exit(f"dnos-deploy: {msg}")
+
   load = send(child,f"load merge {remote}",PROMPT_CFG)
   if ERROR_PAT.search(load):
-    sys.exit(f"dnos-deploy: load merge failed\n{load}")
+    bail(f"load merge failed\n{load}")
 
-  diff = send(child,"show config compare",PROMPT_CFG)
+  diff = send(child,"show config compare | no-more",PROMPT_CFG)
   print("--- candidate diff ---");  print(diff.strip())
 
   chk = send(child,"commit check",PROMPT_CFG)
@@ -93,16 +116,15 @@ def main() -> None:
     child.close(force=True)
     return
   if "passed successfully" not in chk:
-    send(child,"rollback 0",PROMPT_CFG)
-    sys.exit(f"dnos-deploy: commit check FAILED (candidate discarded)\n{chk}")
+    bail(f"commit check FAILED (candidate discarded)\n{chk}")
 
   if a.dry_run:
     send(child,"rollback 0",PROMPT_CFG)
     print("--- dry run: commit check passed, candidate discarded ---")
   else:
     out = send(child,"commit",PROMPT_CFG)
-    if ERROR_PAT.search(out) or "Commit succeeded" not in out:
-      sys.exit(f"dnos-deploy: commit FAILED\n{out}")
+    if "Commit succeeded" not in out:
+      bail(f"commit FAILED\n{out}")
     print("--- commit succeeded ---")
 
   child.sendline("exit"); child.close(force=True)
