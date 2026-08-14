@@ -1,0 +1,27 @@
+{# DNOS OSPF. One instance; areas hold their interfaces. OSPFv2 and OSPFv3 are separate
+   instances on DNOS, keyed by address family. #}
+protocols
+  ospf
+{% for af in ["ipv4","ipv6"] if ospf.af[af] is defined %}
+    instance {{ "ospf" if af == "ipv4" else "ospfv3" }}
+      router-id {{ ospf.router_id }}
+{%   set node_area = ospf.area|default("0.0.0.0") %}
+{%   set areas = (netlab_interfaces|map(attribute="ospf.area")|select("defined")|list + [ node_area ])|unique|list %}
+{%   for area in areas %}
+      area {{ area }}
+{%     for l in netlab_interfaces if l.ospf is defined and l.ospf.area|default(node_area) == area and l[af] is defined %}
+        interface {{ l.ifname }}
+{%       if l.ospf.passive|default(False) %}
+          passive
+{%       endif %}
+{%       if l.ospf.network_type|default("") == "point-to-point" %}
+          network-type point-to-point
+{%       endif %}
+        !
+{%     endfor %}
+      !
+{%   endfor %}
+    !
+{% endfor %}
+  !
+!

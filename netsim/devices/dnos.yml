@@ -45,3 +45,19 @@ features:
     ipv4: True
     ipv6: True
     mtu: True
+  ospf:
+    ipv4: True
+    ipv6: True
+    unnumbered: False
+    default: False
+    priority: False
+    password: False
+    timers: False
+  bgp:
+    ipv4: True
+    ipv6: True
+    local_as: False
+    vrf_local_as: False
+    local_as_ibgp: False
+    activate_af: True
+    rfc8950: False

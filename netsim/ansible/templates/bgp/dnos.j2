@@ -1,0 +1,22 @@
+{# DNOS BGP. netlab AF names map onto DNOS afi-safi names by suffixing "-unicast". #}
+protocols
+  bgp {{ bgp.as }}
+    router-id {{ bgp.router_id }}
+{% for af in ["ipv4","ipv6"] if bgp[af] is defined %}
+    address-family {{ af }}-unicast
+    !
+{% endfor %}
+{% for n in bgp.neighbors|default([]) %}
+{%   for af in ["ipv4","ipv6"] if n[af] is defined and n[af] is not sameas true %}
+    neighbor {{ n[af] }}
+      remote-as {{ n.as }}
+{%     if n.type == "ibgp" %}
+      update-source {{ loopback.ifname }}
+{%     endif %}
+      address-family {{ af }}-unicast
+      !
+    !
+{%   endfor %}
+{% endfor %}
+  !
+!
