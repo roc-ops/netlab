@@ -19,6 +19,17 @@ class External(_Provider):
     # Cleanup MGMT MAC Address (since it's useless for us)
     node.mgmt.pop('mac',None)
 
+    # A device reached through the external provider ALREADY EXISTS -- netlab did not create it
+    # and does not own it outright. It has a hostname, and on a router in service the loopback is
+    # usually load-bearing: the BGP router-id, and the route-distinguisher endpoint for L2VPN
+    # services. Rendering node identity as if netlab owned it makes the deploy REPLACE those.
+    #
+    # Device templates that can be pointed at physical hardware must therefore guard hostname and
+    # loopback rendering on 'netlab_manage_identity', which defaults to False here and can be set
+    # to True per node when netlab really is the owner of record.
+    if 'netlab_manage_identity' not in node:
+      node.netlab_manage_identity = False
+
   def pre_start_lab(self, topology: Box) -> None:
     log.print_verbose('pre-start hook for External')
     if log.QUIET:
