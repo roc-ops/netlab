@@ -36,7 +36,12 @@ CASES = [
 # An area / address-family header counts as metadata as far as the PARENT construct is
 # concerned: an instance holding only an empty area is still a stranded instance.
 METADATA = re.compile(r"^\s*(router-id|administrative-distance|log-adjacency|global |area |!|$)")
-OPENER   = re.compile(r"^(\s*)(instance \S+|address-family \S+|area \S+)\s*$")
+# Only constructs where EMPTY IS WRONG. An OSPF instance or area with no interfaces is a
+# stranded stanza. A BGP "address-family" with an empty body is NOT -- that is simply how
+# DNOS enables an address family, and the production box carries several of them. Including
+# address-family here produced 20 false positives, which would have led to "fixing" config
+# that was already correct.
+OPENER   = re.compile(r"^(\s*)(instance \S+|area \S+)\s*$")
 
 
 def render(case, lo_af, link_af, tmp):
