@@ -1,0 +1,28 @@
+{# DNOS initial configuration. Rendered as a DNOS CLI config file, loaded with "load merge". #}
+system
+  name {{ inventory_hostname }}
+!
+interfaces
+{% if loopback is defined %}
+  {{ loopback.ifname }}
+    admin-state enabled
+{%   for af in ["ipv4","ipv6"] if loopback[af] is defined %}
+    {{ af }}-address {{ loopback[af] }}
+{%   endfor %}
+  !
+{% endif %}
+{% for l in interfaces %}
+  {{ l.ifname }}
+    admin-state enabled
+{%   if l.name is defined %}
+    description "{{ l.name }}"
+{%   endif %}
+{%   if l.mtu is defined %}
+    mtu {{ l.mtu }}
+{%   endif %}
+{%   for af in ["ipv4","ipv6"] if l[af] is defined and l[af] is not sameas true %}
+    {{ af }}-address {{ l[af] }}
+{%   endfor %}
+  !
+{% endfor %}
+!

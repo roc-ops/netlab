@@ -1,0 +1,47 @@
+---
+# DriveNets Network Cloud (DNOS) device definition -- PHYSICAL HARDWARE, external provider only.
+#
+# There is no DNOS container or VM image. DNOS is a containerised NOS, but it runs on physical
+# white-box hardware (here: a single-NCP cluster on an Edgecore S9600-72XC), so netlab can only
+# drive it through the "external" provider: netlab never creates or destroys the node, it renders
+# configuration and pushes it to a box that is already running.
+#
+# CONFIG DEPLOYMENT
+#
+# DNOS has a proper candidate datastore, so deployment is transactional:
+#   1. netlab renders the module config into a DNOS CLI config file
+#   2. the file is copied to /config/ on the active NCC (scp; there is no sftp subsystem)
+#   3. "configure" / "load merge <file>" / "commit"
+# "show config compare" gives a real diff of the candidate, and "commit check" validates it
+# WITHOUT applying, so a dry run is possible before anything touches the running config.
+# "rollback 0" discards the candidate. NETCONF (:830) is also available and advertises
+# candidate/validate/confirmed-commit/rollback-on-error if an XML path is ever preferred.
+#
+# The SSH exec channel does NOT work: the DNOS CLI rejects commands passed as ssh arguments and
+# takes ~10s to load, so commands must be fed on stdin after a delay. Several commands
+# ("request file delete", and "commit" on a concurrent-commit conflict) prompt interactively --
+# any transport must answer prompts or it will silently do nothing.
+#
+# INTERFACE NAMING: DNOS encodes port speed in the interface name (ge10-... = 10G,
+# ge100-... = 100G). netlab has one name pattern per device, so only the 10G range is
+# addressable here. Tracked as roc-ops/RocContLab#69.
+description: DriveNets Network Cloud (DNOS) [physical hardware]
+interface_name: ge10-0/0/{ifindex}
+ifindex_offset: 1
+mgmt_if: mgmt0
+loopback_interface_name: "lo{ifindex}"
+lag_interface_name: "bundle-{lag.ifindex}"
+role: router
+support:
+  level: best-effort
+external:
+  image: none
+graphite.icon: router
+group_vars:
+  ansible_connection: local
+  ansible_network_os: dnos
+features:
+  initial:
+    ipv4: True
+    ipv6: True
+    mtu: True
