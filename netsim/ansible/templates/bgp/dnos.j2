@@ -1,7 +1,28 @@
-{# DNOS BGP. netlab AF names map onto DNOS afi-safi names by suffixing "-unicast". #}
+{# DNOS BGP. netlab address families map onto DNOS afi-safi names by suffixing "-unicast", so a
+   single loop covers both rather than duplicating the block per family.
+
+   IDENTITY: router-id is only rendered when netlab is the owner of record. On a device netlab
+   did not create, "load merge" would otherwise REPLACE the running BGP router-id of a box that
+   is already peering -- the same overwrite class as the hostname and loopback (see
+   netsim/providers/external.py and RocContLab issues #70/#72). Left unset, DNOS derives it.
+
+   IBGP OVER LOOPBACKS ON A DEVICE NETLAB DOES NOT OWN: netlab plans neighbour addresses from its
+   own loopback pool, but "initial" deliberately does not configure the loopback of such a device,
+   so those addresses exist nowhere and the sessions cannot come up. "update-source" below names
+   the real interface, whose address is whatever the box already had. The fix is not a template
+   guard -- it is to tell netlab the truth in the topology:
+
+       nodes:
+         RNS72XC:
+           loopback.ipv4: 192.0.2.5/32
+
+   With the real loopback pinned, the planned neighbour addresses match the hardware and iBGP is
+   coherent. Without it, expect sessions that configure cleanly and never establish. #}
 protocols
   bgp {{ bgp.as }}
+{% if netlab_manage_identity|default(True) %}
     router-id {{ bgp.router_id }}
+{% endif %}
 {% for af in ["ipv4","ipv6"] if bgp[af] is defined %}
     address-family {{ af }}-unicast
     !
