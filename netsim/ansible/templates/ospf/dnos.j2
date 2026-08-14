@@ -1,30 +1,50 @@
-{# DNOS OSPF. One instance; areas hold their interfaces. OSPFv2 and OSPFv3 are separate
-   instances on DNOS, keyed by address family. #}
+{# DNOS OSPF. OSPFv2 and OSPFv3 are separate instances on DNOS, keyed by address family.
+
+   An instance is emitted only when that address family actually has interfaces. Without that
+   check an IPv4-only link leaves a stranded "instance ospfv3 / area 0.0.0.0" carrying a router-id
+   and nothing else -- the device accepts it and keeps it, so nothing complains, but it is wrong.
+   This is easy to hit on physical hardware: once the system loopback is excluded (it belongs to
+   the device, not to netlab), a single-family link can be all that remains.
+
+   The system loopback is excluded unless netlab is the owner of record. On a device in service
+   the loopback anchors the BGP router-id and L2VPN route-distinguishers, so it must not be pulled
+   into an OSPF area that netlab created. #}
+{% set _own  = netlab_manage_identity|default(True) %}
+{% set _lb   = loopback.ifname|default('') %}
+{% set _dflt = ospf.area|default("0.0.0.0") %}
 protocols
   ospf
 {% for af in ["ipv4","ipv6"] if ospf.af[af] is defined %}
+{#   Interfaces this address family actually runs OSPF on, minus the loopback when the device
+     owns it rather than netlab. #}
+{%   set _if = [] %}
+{%   for l in netlab_interfaces|default([])
+        if l.ospf is defined and l[af] is defined and (_own or l.ifname != _lb) %}
+{%     set _ = _if.append(l) %}
+{%   endfor %}
+{%   if _if %}
     instance {{ "ospf" if af == "ipv4" else "ospfv3" }}
       router-id {{ ospf.router_id }}
-{%   set node_area = ospf.area|default("0.0.0.0") %}
-{%   set areas = (netlab_interfaces|map(attribute="ospf.area")|select("defined")|list + [ node_area ])|unique|list %}
-{%   for area in areas %}
-      area {{ area }}
-{#     A pre-existing physical device owns its system loopback: do not enrol it into an
-       OSPF area netlab created. Guarded on the same flag as identity rendering. #}
-{%     for l in netlab_interfaces if l.ospf is defined and l.ospf.area|default(node_area) == area and l[af] is defined
-         and (netlab_manage_identity|default(True) or l.ifname != loopback.ifname|default('')) %}
-        interface {{ l.ifname }}
-{%       if l.ospf.passive|default(False) %}
-          passive
-{%       endif %}
-{%       if l.ospf.network_type|default("") == "point-to-point" %}
-          network-type point-to-point
-{%       endif %}
-        !
+{%     set _areas = [] %}
+{%     for l in _if if l.ospf.area|default(_dflt) not in _areas %}
+{%       set _ = _areas.append(l.ospf.area|default(_dflt)) %}
 {%     endfor %}
+{%     for area in _areas %}
+      area {{ area }}
+{%       for l in _if if l.ospf.area|default(_dflt) == area %}
+        interface {{ l.ifname }}
+{%         if l.ospf.passive|default(False) %}
+          passive
+{%         endif %}
+{%         if l.ospf.network_type|default("") == "point-to-point" %}
+          network-type point-to-point
+{%         endif %}
+        !
+{%       endfor %}
       !
-{%   endfor %}
+{%     endfor %}
     !
+{%   endif %}
 {% endfor %}
   !
 !
