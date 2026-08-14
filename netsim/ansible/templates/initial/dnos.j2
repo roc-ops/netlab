@@ -1,14 +1,33 @@
-{# DNOS initial configuration. Rendered as a DNOS CLI config file, loaded with "load merge". #}
+{# DNOS initial configuration, rendered as a DNOS CLI config file and applied with "load merge".
+
+   SAFETY: this device is always PHYSICAL hardware that netlab did not create and does not own
+   outright. A box in service already has a hostname and a loopback, and on a production router
+   the loopback is load-bearing -- typically the BGP router-id and the route-distinguisher
+   endpoint for L2VPN services. Rendering them unconditionally makes "load merge" REPLACE them.
+
+   So neither is emitted unless explicitly opted into:
+     netlab_dnos_manage_system   -- render "system name"
+     netlab_dnos_manage_loopback -- render the loopback address
+   Both default to False in netsim/devices/dnos.yml. Data-plane interfaces are safe to render
+   without a flag: the netlab "interfaces" list only ever holds links from the topology, i.e.
+   ports that were explicitly given to netlab. #}
+{% if netlab_dnos_manage_system|default(False) %}
 system
   name {{ inventory_hostname }}
 !
+{% endif %}
 interfaces
-{% if loopback is defined %}
+{% if netlab_dnos_manage_loopback|default(False) and loopback is defined %}
   {{ loopback.ifname }}
     admin-state enabled
-{%   for af in ["ipv4","ipv6"] if loopback[af] is defined %}
-    {{ af }}-address {{ loopback[af] }}
-{%   endfor %}
+{%   if loopback.ipv4 is defined %}
+    ipv4-address {{ loopback.ipv4 }}
+{%   endif %}
+{%   if loopback.ipv6 is defined %}
+{#   DNOS rejects any loopback IPv6 prefix other than /128:
+     "Loopback interface IPv6 address on lo0 can be configured only with /128" #}
+    ipv6-address {{ loopback.ipv6|ipaddr("address") }}/128
+{%   endif %}
   !
 {% endif %}
 {% for l in interfaces %}

@@ -40,6 +40,11 @@ graphite.icon: router
 group_vars:
   ansible_connection: local
   ansible_network_os: dnos
+  # Always pre-existing physical hardware: do NOT rewrite the box identity (hostname,
+  # loopback) unless explicitly opted in. On a production router the loopback carries the
+  # BGP router-id and the L2VPN route-distinguishers.
+  netlab_dnos_manage_system: False
+  netlab_dnos_manage_loopback: False
 features:
   initial:
     ipv4: True

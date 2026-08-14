@@ -26,6 +26,7 @@ PROMPT_OPER = r"[\w.-]+# "
 PROMPT_CFG  = r"[\w.-]+\(cfg\)# "
 CONFIRM     = r"\(yes/no\)\s*\[no\]\?"
 ERROR_PAT   = re.compile(r"ERROR|Invalid command|Unknown word|failed|Failed", re.I)
+NOOP_PAT    = re.compile(r"no configuration changes were made", re.I)
 
 
 def scp_config(host: str, user: str, password: str, src: str, remote_name: str) -> None:
@@ -82,6 +83,15 @@ def main() -> None:
   print("--- candidate diff ---");  print(diff.strip())
 
   chk = send(child,"commit check",PROMPT_CFG)
+  # A no-op deploy is a success, not a failure: DNOS answers an empty candidate with
+  # "commit action is not applicable", which is a NOTICE rather than an error. Treat that
+  # known-benign notice as done, and fail only on anything else.
+  if NOOP_PAT.search(chk):
+    send(child,"rollback 0",PROMPT_CFG)
+    print("--- nothing to do: candidate is empty, running config already matches ---")
+    child.sendline("exit")
+    child.close(force=True)
+    return
   if "passed successfully" not in chk:
     send(child,"rollback 0",PROMPT_CFG)
     sys.exit(f"dnos-deploy: commit check FAILED (candidate discarded)\n{chk}")
