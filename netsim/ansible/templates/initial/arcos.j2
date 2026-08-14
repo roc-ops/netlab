@@ -30,15 +30,26 @@
 {# ArcOS accepts only letters/digits/hyphen in a hostname, so the underscores netlab
    allows in node names have to be replaced (same as eos/frr/sonic/...) -- otherwise the
    whole initial commit aborts on any multi-DUT topology (dut_a, dut_spine, ...) #}
+{# netlab_manage_identity is False by default for external-provider nodes (see
+   netsim/providers/external.py): a physical switch already in service has a hostname, and
+   renaming it out from under the operator is not netlab's call. Containerlab nodes are
+   unaffected -- netlab created them, so it owns their identity. #}
+{% if netlab_manage_identity|default(True) %}
 system hostname {{ inventory_hostname.replace("_","-") }}
 !
+{% endif %}
 {#  Every interface this loop configures is remembered in _cfg.intf so the VRF-binding loop at
     the end of this file can bind EXACTLY the interfaces this file creates -- see the comment
     there. #}
 {% set _cfg = namespace(intf=[]) %}
+{#  On a pre-existing physical device the system loopback is load-bearing -- it anchors the
+    BGP router-id and the EVPN fabric -- so the loop below leaves it alone unless netlab is the
+    owner of record (netlab_manage_identity). Additional loopbacks are netlab's own and are
+    still configured. #}
 {% for l in netlab_interfaces|default([])
      if (l.type|default('') in ['loopback','lag','vlan_member'] or not l.virtual_interface|default(false))
-     and l.lag._parentindex is not defined %}
+     and l.lag._parentindex is not defined
+     and (netlab_manage_identity|default(True) or l.ifname != loopback.ifname|default('')) %}
 {%   set _cfg.intf = _cfg.intf + [ l.ifname ] %}
 {#  A routed VLAN subinterface (netlab type vlan_member, named <parent>.<vlan-id> by
     devices/arcos.yml) is not a standalone ArcOS interface -- it is `subinterface <vlan-id>`
