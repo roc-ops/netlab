@@ -9,7 +9,10 @@ protocols
 {%   set areas = (netlab_interfaces|map(attribute="ospf.area")|select("defined")|list + [ node_area ])|unique|list %}
 {%   for area in areas %}
       area {{ area }}
-{%     for l in netlab_interfaces if l.ospf is defined and l.ospf.area|default(node_area) == area and l[af] is defined %}
+{#     A pre-existing physical device owns its system loopback: do not enrol it into an
+       OSPF area netlab created. Guarded on the same flag as identity rendering. #}
+{%     for l in netlab_interfaces if l.ospf is defined and l.ospf.area|default(node_area) == area and l[af] is defined
+         and (netlab_manage_identity|default(True) or l.ifname != loopback.ifname|default('')) %}
         interface {{ l.ifname }}
 {%       if l.ospf.passive|default(False) %}
           passive

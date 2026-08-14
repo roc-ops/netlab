@@ -68,7 +68,8 @@ network-instance default protocol OSPF p{{ pid }}
  global router-id {{ ospf.router_id }}
  global log-adjacency-changes LOG_ADJ_ENABLE_DETAILED
 {%   for a in _areas %}
-{%     set _has_lb = loopback.ipv4 is defined and (loopback.ospf.area|default(_dflt_area)) == a.area %}
+{%     set _has_lb = loopback.ipv4 is defined and (loopback.ospf.area|default(_dflt_area)) == a.area
+                      and netlab_manage_identity|default(True) %}
 {%     set _body %}{{ area_interfaces('ipv4', a.area) }}{% endset %}
 {%     if _has_lb or _body.strip() %}
  area {{ a.area }}
@@ -84,7 +85,8 @@ network-instance default protocol OSPF3 p{{ pid }}
  global router-id {{ ospf.router_id }}
  global log-adjacency-changes LOG_ADJ_ENABLE_DETAILED
 {%   for a in _areas %}
-{%     set _has_lb = loopback.ipv6 is defined and (loopback.ospf.area|default(_dflt_area)) == a.area %}
+{%     set _has_lb = loopback.ipv6 is defined and (loopback.ospf.area|default(_dflt_area)) == a.area
+                      and netlab_manage_identity|default(True) %}
 {%     set _body %}{{ area_interfaces('ipv6', a.area) }}{% endset %}
 {%     if _has_lb or _body.strip() %}
  area {{ a._area_int }}
