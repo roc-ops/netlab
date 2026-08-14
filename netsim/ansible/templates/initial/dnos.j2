@@ -37,7 +37,11 @@ interfaces
     description "{{ l.name }}"
 {%   endif %}
 {%   if l.mtu is defined %}
-    mtu {{ l.mtu }}
+{#   DNOS "mtu" is the L2 MTU and derives IPv4/IPv6/MPLS MTU as L2 minus the 14-byte Ethernet
+     header, while netlab l.mtu is the layer-3 MTU. Passing it through raw leaves the device
+     14 bytes short, which shows up as an OSPF adjacency stuck in ExStart against a neighbour
+     that got the L3 value right. (ArcOS has the same class of adjustment, at +26.) #}
+    mtu {{ l.mtu + 14 }}
 {%   endif %}
 {%   for af in ["ipv4","ipv6"] if l[af] is defined and l[af] is not sameas true %}
     {{ af }}-address {{ l[af] }}

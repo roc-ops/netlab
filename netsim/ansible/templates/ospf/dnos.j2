@@ -24,7 +24,28 @@ protocols
 {%   endfor %}
 {%   if _if %}
     instance {{ "ospf" if af == "ipv4" else "ospfv3" }}
+{%     if _own %}
       router-id {{ ospf.router_id }}
+{%     else %}
+{#     COEXISTENCE WITH AN EXISTING OSPF INSTANCE.
+
+       A device netlab does not own may already be running OSPF, and DNOS constrains what a
+       second instance may look like:
+
+       * every instance must agree on the router-id, and DNOS compares the CONFIGURED
+         attribute -- so an explicit router-id here is rejected against an existing instance
+         that has none, whatever value we use. Let the device derive it instead.
+       * administrative distances must be globally distinct ACROSS instances, and the
+         comparison is per-value, not per-kind: our inter-area is checked against their
+         external too. A stock instance sits on the defaults, so all three are moved clear
+         of them here.
+
+       Both were found by "commit check" against a router already running OSPF; neither is
+       visible from the netlab data model. #}
+      administrative-distance external {{ netlab_dnos_ospf_distance_external|default(200) }}
+      administrative-distance inter-area {{ netlab_dnos_ospf_distance_inter_area|default(201) }}
+      administrative-distance intra-area {{ netlab_dnos_ospf_distance_intra_area|default(202) }}
+{%     endif %}
 {%     set _areas = [] %}
 {%     for l in _if if l.ospf.area|default(_dflt) not in _areas %}
 {%       set _ = _areas.append(l.ospf.area|default(_dflt)) %}
