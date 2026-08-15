@@ -62,7 +62,7 @@ def render(case, lo_af, link_af, tmp):
   if r.returncode:
     return None, (r.stdout+r.stderr).strip().splitlines()[:3]
   out = {}
-  for m in MODULES:
+  for m in ["initial"] + MODULES:          # initial is always rendered; it is not a module: value
     p = f"node_files/n1/{m}"
     if os.path.exists(p):
       out[m] = open(p).read()
@@ -100,6 +100,31 @@ def main():
         fails += 1
         continue
       notes = []
+
+      # SHAPE 2 -- absence. The previous version only looked for constructs that should not be
+      # there, so a template producing NOTHING passed clean. A module that was asked for must
+      # render something for every family the node actually has.
+      for mod in MODULES:
+        cfg = cfgs.get(mod, "")
+        if not cfg.strip():
+          notes.append(f"{mod}: rendered NOTHING")
+          fails += 1
+          continue
+        for af in ("ipv4","ipv6"):
+          if af in link_af and not any(t in cfg for t in (f"{af}-address", f"{af}-unicast",
+                                                          "ospfv3" if af == "ipv6" else "instance ospf")):
+            notes.append(f"{mod}: no {af} construct although the node has {af}")
+            fails += 1
+
+      # PHYSICAL -- the device owns its loopback, so nothing may render it. The old phys cases
+      # gave the loopback both families, which made the spurious-AF check structurally unable to
+      # fire on it: the cases named for the physical regression could not detect it.
+      if name.startswith("phys"):
+        for mod, cfg in cfgs.items():
+          if "lo0" in cfg:
+            notes.append(f"{mod}: renders lo0 although the device owns its loopback")
+            fails += 1
+
       for mod, cfg in cfgs.items():
         for blk in empty_blocks(cfg):
           notes.append(f"{mod}: EMPTY <{blk}>")
