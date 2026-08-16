@@ -15,6 +15,12 @@
        nodes:
          RNS72XC:
            loopback.ipv4: 192.0.2.5/32
+           loopback.ipv6: 2001:db8:ffff::5/128
+
+   BOTH families need pinning. Pinning only IPv4 fixes only the IPv4 session: the IPv6 neighbour
+   addresses still come from netlab's pool, so on a dual-stack topology the IPv6 iBGP session is
+   left exactly as dead as before, silently. Use the addresses the box actually has -- read them
+   with "show config interface lo0".
 
    With the real loopback pinned, the planned neighbour addresses match the hardware and iBGP is
    coherent. Without it, expect sessions that configure cleanly and never establish. #}
