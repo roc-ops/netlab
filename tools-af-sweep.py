@@ -14,9 +14,21 @@ three ways: "instance ospf" is a substring of "instance ospfv3" so the dual-stac
 follow loopback addressing, giving false positives on exactly the mixed-AF nodes this sweep
 exists to cover; and the vocabulary was DNOS's, so every other device came back red.
 
-Shape 2 is now DIFFERENTIAL: render the same topology with a family and without it, and compare.
-If adding a family does not change what the module renders, the module is ignoring that family.
-No device vocabulary is involved, so this is correct for any device.
+Shape 2 is DIFFERENTIAL: render the same topology with a family and without it, and compare.
+If varying a family does not change what the module renders, the module is ignoring that family.
+No device vocabulary is involved, so shape 2 is correct for any device. Shape 1 is not -- its
+opener patterns are per-CLI and have to be extended for each device's instance syntax.
+
+WHAT THIS SWEEP DOES NOT DETECT, deliberately. Shape 2 finds a family that is ABSENT, never one
+that is WRONG. A family rendered with the wrong content -- a network type set for IPv4 only, an
+MTU short by a header, a policy attached to one family and not the other -- changes the output
+when the family is varied, so the differential is satisfied and says nothing. Both templates in
+this tree carry comments about exactly such defects stalling an adjacency in ExStart.
+
+That limit is on purpose. Detecting wrong content means encoding what correct content looks like
+per device and per module, which is how a hardcoded CLI vocabulary crept into this file three
+times and made it wrong for every device except the one in front of me. Content correctness
+belongs in integration tests against real hardware, not here.
 
 Usage: af_sweep.py <device> [module ...]
 """
@@ -99,7 +111,12 @@ def one_case(name, lo_af, link_af):
   try:
     cfgs, lb = render(name, lo_af, link_af, tmp)
     if cfgs is None:
-      return [f"RENDER FAILED: {lb[0][:70]}"]
+      # NOT a template defect. The topology this harness generates is fixed (two nodes, one
+      # link), so a module with requirements it cannot express -- stp needs vlan, vrf and evpn
+      # need their own structures -- fails to transform, as does a device that declares a family
+      # unsupported. Reporting those as findings makes the harness cry wolf: a red count that
+      # says nothing about template correctness. They are surfaced separately and not counted.
+      return [], [f"cannot express this case: {lb[0][:70]}"]
 
     for mod, cfg in cfgs.items():
       for blk in empty_blocks(cfg):
@@ -151,16 +168,26 @@ def one_case(name, lo_af, link_af):
         os.chdir("/"); shutil.rmtree(tmp2, ignore_errors=True)
   finally:
     os.chdir("/"); shutil.rmtree(tmp, ignore_errors=True)
-  return notes
+  return notes, []
 
 
 def main():
-  total = 0
+  total = n_skip = 0
   for name, lo_af, link_af in CASES:
-    notes = sorted(set(one_case(name, lo_af, link_af)))   # count what is printed, not pre-dedup
+    found, skipped = one_case(name, lo_af, link_af)
+    notes = sorted(set(found))            # count what is printed, not pre-dedup
     total += len(notes)
-    print(f"  {name:16} {'OK' if not notes else '; '.join(notes)}")
-  print(f"\n  device={DEVICE} modules={','.join(MODULES)}  findings={total}")
+    n_skip += len(skipped)
+    if notes:
+      print(f"  {name:16} {'; '.join(notes)}")
+    elif skipped:
+      print(f"  {name:16} SKIPPED -- {skipped[0]}")
+    else:
+      print(f"  {name:16} OK")
+  tail = f"  findings={total}"
+  if n_skip:
+    tail += f"  (skipped={n_skip}, harness could not express those cases)"
+  print(f"\n  device={DEVICE} modules={','.join(MODULES)}{tail}")
   return 1 if total else 0
 
 

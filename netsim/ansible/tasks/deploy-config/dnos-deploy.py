@@ -143,9 +143,12 @@ def main() -> None:
     encoding="utf-8",timeout=180)
   child.expect(PROMPT_OPER,timeout=180)          # wait out "DRIVENETS CLI Loading..."
 
-  send(child,"configure",PROMPT_CFG)
-
   try:
+    # "configure" belongs inside the guard too. Outside it, a timeout entering configuration
+    # mode escaped as an uncaught DeployError traceback instead of a clean one-line reason.
+    # No candidate exists at that point, so nothing could be stranded -- but a traceback is
+    # still the wrong thing to hand an operator on a failure path.
+    send(child,"configure",PROMPT_CFG)
     print(config_session(child,a,remote))
   except BaseException as exc:
     # EVERY failure lands here, not only the ones we detect and name. A timeout, a dropped
