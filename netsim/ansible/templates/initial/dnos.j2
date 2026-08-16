@@ -36,15 +36,24 @@ interfaces
 {%   if l.name is defined %}
     description "{{ l.name }}"
 {%   endif %}
-{%   if l.mtu is defined %}
+{%   if l.mtu is defined and l.type|default('') != 'loopback' %}
 {#   DNOS "mtu" is the L2 MTU and derives IPv4/IPv6/MPLS MTU as L2 minus the 14-byte Ethernet
      header, while netlab l.mtu is the layer-3 MTU. Passing it through raw leaves the device
      14 bytes short, which shows up as an OSPF adjacency stuck in ExStart against a neighbour
-     that got the L3 value right. (ArcOS has the same class of adjustment, at +26.) #}
+     that got the L3 value right. (ArcOS has the same class of adjustment, at +26.)
+     A loopback has no Ethernet header and takes no MTU leaf. #}
     mtu {{ l.mtu + 14 }}
 {%   endif %}
 {%   for af in ["ipv4","ipv6"] if l[af] is defined and l[af] is not sameas true %}
+{%     if af == 'ipv6' and l.type|default('') == 'loopback' %}
+{#     DNOS rejects any loopback IPv6 prefix other than /128. This is keyed on interface TYPE,
+       not on position in this file: an ADDITIONAL loopback goes through this loop rather than
+       the system-loopback block above, so a coercion that lives only up there silently misses
+       every loopback except the first. #}
+    ipv6-address {{ l[af]|ipaddr("address") }}/128
+{%     else %}
     {{ af }}-address {{ l[af] }}
+{%     endif %}
 {%   endfor %}
   !
 {% endfor %}
