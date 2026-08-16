@@ -39,7 +39,12 @@ CASES = [
 
 # Constructs where an empty body is a defect. A BGP "address-family" with an empty body is NOT
 # one -- that is how DNOS enables a family, and the production router carries several.
-OPENER   = re.compile(r"^(\s*)(instance \S+|area \S+|network-instance \S+)\s*$")
+# Constructs where an empty body is a defect. "network-instance <ni> protocol <proto> <inst>"
+# is ArcOS's instance line -- five tokens. A pattern anchored after the first token never matched
+# it, so this check silently did nothing on ArcOS while looking like it covered it.
+OPENER   = re.compile(r"^(\s*)(instance \S+"
+                      r"|area \S+"
+                      r"|network-instance \S+ protocol \S+ \S+)\s*$")
 METADATA = re.compile(r"^\s*(router-id|administrative-distance|log-adjacency|global |area |!|$)")
 
 
@@ -108,30 +113,40 @@ def one_case(name, lo_af, link_af):
         if re.search(rf"(?<![\w-]){re.escape(lb)}(?![\w-])", cfg):
           notes.append(f"{mod}: renders {lb} although the device owns its loopback")
 
-    # Shape 2 -- differential. Drop each family the node has and re-render; if the module's
-    # output is unchanged, that family is being ignored entirely.
+    # A module asked for that renders nothing at all is a defect regardless of families, and
+    # needs no second render. Nesting this inside the differential loop below gated it on the
+    # dual-stack cases and left the phys cases -- the whole point of this sweep -- uncovered.
+    for mod in MODULES:
+      if not cfgs.get(mod,"").strip():
+        notes.append(f"{mod}: rendered NOTHING")
+
+    # Shape 2 -- differential. Vary each family and re-render; if the module's output is
+    # unchanged, that family is being ignored entirely.
     for af in ("ipv4","ipv6"):
-      if af not in link_af:
+      # Vary the family from BOTH the loopback and the link. Modules do not all consume the same
+      # addressing: OSPF follows interfaces, but BGP address families follow the loopback (that
+      # is where the router-id and iBGP endpoints come from), so varying the link alone leaves
+      # BGP unchanged for a legitimate reason and false-positives on the mixed-AF nodes this
+      # sweep exists to cover.
+      #
+      # A single-family case cannot have its only family REMOVED, so ADD the missing one instead.
+      # Skipping those left 6 of 7 cases -- including both phys cases -- with no absence check.
+      if af in link_af:
+        alt, alt_lo = [x for x in link_af if x != af], [x for x in lo_af if x != af]
+        verb = "dropping"
+      else:
+        alt, alt_lo = link_af + [af], sorted(set(lo_af + [af]))
+        verb = "adding"
+      if not alt or not alt_lo:
         continue
       tmp2 = tempfile.mkdtemp(prefix="afs2.")
       try:
-        # Drop the family from the loopback AS WELL as the link. Modules do not all consume the
-        # same addressing: OSPF follows interfaces, but BGP address families follow the loopback
-        # (that is where the router-id and iBGP endpoints come from). Dropping it from the link
-        # alone leaves BGP unchanged for a legitimate reason and reports a false positive on
-        # exactly the mixed-AF nodes this sweep exists to cover.
-        other    = [x for x in link_af if x != af]
-        other_lo = [x for x in lo_af   if x != af]
-        if not other or not other_lo:
-          continue                                  # cannot drop the only family
-        cfgs2, _ = render(name, other_lo, other, tmp2)
+        cfgs2, _ = render(name, alt_lo, alt, tmp2)
         if cfgs2 is None:
           continue
         for mod in MODULES:
-          if cfgs.get(mod,"") == cfgs2.get(mod,"") and cfgs.get(mod,"").strip():
-            notes.append(f"{mod}: dropping {af} changes nothing -- family not rendered")
-          if not cfgs.get(mod,"").strip():
-            notes.append(f"{mod}: rendered NOTHING")
+          if cfgs.get(mod,"").strip() and cfgs.get(mod,"") == cfgs2.get(mod,""):
+            notes.append(f"{mod}: {verb} {af} changes nothing -- family not rendered")
       finally:
         os.chdir("/"); shutil.rmtree(tmp2, ignore_errors=True)
   finally:
@@ -142,9 +157,9 @@ def one_case(name, lo_af, link_af):
 def main():
   total = 0
   for name, lo_af, link_af in CASES:
-    notes = one_case(name, lo_af, link_af)
+    notes = sorted(set(one_case(name, lo_af, link_af)))   # count what is printed, not pre-dedup
     total += len(notes)
-    print(f"  {name:16} {'OK' if not notes else '; '.join(sorted(set(notes)))}")
+    print(f"  {name:16} {'OK' if not notes else '; '.join(notes)}")
   print(f"\n  device={DEVICE} modules={','.join(MODULES)}  findings={total}")
   return 1 if total else 0
 

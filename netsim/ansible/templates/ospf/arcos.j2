@@ -63,37 +63,53 @@
 {%     endif %}
 {%   endfor %}
 {% endmacro %}
+{#  Build the areas FIRST and emit the instance only if at least one of them has content.
+    Keying the instance on ospf.af alone leaves a stranded "network-instance ... protocol OSPF"
+    carrying a router-id and nothing else when no area qualifies -- which the device accepts and
+    keeps. Easy to reach once the system loopback is excluded because the device owns it: a
+    single-family link is then all that is left, and the other family has nothing at all. Same
+    defect class as the DNOS empty-instance one. #}
 {% if ospf.router_id is defined and ospf.af.ipv4|default(false) %}
+{%   set _v4 %}
+{%     for a in _areas %}
+{%       set _has_lb = loopback.ipv4 is defined and (loopback.ospf.area|default(_dflt_area)) == a.area
+                        and netlab_manage_identity|default(True) %}
+{%       set _body %}{{ area_interfaces('ipv4', a.area) }}{% endset %}
+{%       if _has_lb or _body.strip() %}
+ area {{ a.area }}
+{%         if _has_lb %}
+  interface loopback0
+{%         endif %}
+{{ _body }}
+{%       endif %}
+{%     endfor %}
+{%   endset %}
+{%   if _v4.strip() %}
 network-instance default protocol OSPF p{{ pid }}
  global router-id {{ ospf.router_id }}
  global log-adjacency-changes LOG_ADJ_ENABLE_DETAILED
-{%   for a in _areas %}
-{%     set _has_lb = loopback.ipv4 is defined and (loopback.ospf.area|default(_dflt_area)) == a.area
-                      and netlab_manage_identity|default(True) %}
-{%     set _body %}{{ area_interfaces('ipv4', a.area) }}{% endset %}
-{%     if _has_lb or _body.strip() %}
- area {{ a.area }}
-{%       if _has_lb %}
-  interface loopback0
-{%       endif %}
-{{ _body }}
-{%     endif %}
-{%   endfor %}
+{{ _v4 }}
+{%   endif %}
 {% endif %}
 {% if ospf.router_id is defined and ospf.af.ipv6|default(false) %}
+{%   set _v6 %}
+{%     for a in _areas %}
+{%       set _has_lb = loopback.ipv6 is defined and (loopback.ospf.area|default(_dflt_area)) == a.area
+                        and netlab_manage_identity|default(True) %}
+{%       set _body %}{{ area_interfaces('ipv6', a.area) }}{% endset %}
+{%       if _has_lb or _body.strip() %}
+ area {{ a._area_int }}
+{%         if _has_lb %}
+  interface loopback0
+{%         endif %}
+{{ _body }}
+{%       endif %}
+{%     endfor %}
+{%   endset %}
+{%   if _v6.strip() %}
 network-instance default protocol OSPF3 p{{ pid }}
  global router-id {{ ospf.router_id }}
  global log-adjacency-changes LOG_ADJ_ENABLE_DETAILED
-{%   for a in _areas %}
-{%     set _has_lb = loopback.ipv6 is defined and (loopback.ospf.area|default(_dflt_area)) == a.area
-                      and netlab_manage_identity|default(True) %}
-{%     set _body %}{{ area_interfaces('ipv6', a.area) }}{% endset %}
-{%     if _has_lb or _body.strip() %}
- area {{ a._area_int }}
-{%       if _has_lb %}
-  interface loopback0
-{%       endif %}
-{{ _body }}
-{%     endif %}
-{%   endfor %}
+{{ _v6 }}
+{%   endif %}
 {% endif %}
