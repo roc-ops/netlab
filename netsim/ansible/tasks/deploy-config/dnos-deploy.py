@@ -34,6 +34,17 @@ ERROR_PAT   = re.compile(r"ERROR|Invalid command|Unknown word|failed|Failed", re
 NOOP_PAT    = re.compile(r"no configuration changes were made", re.I)
 
 
+class DeployError(Exception):
+  """Anything that should abort the deploy.
+
+  Raised rather than calling sys.exit() so the caller can GUARANTEE cleanup. sys.exit raises
+  SystemExit, which is a BaseException and not an Exception, so an "except Exception" cleanup
+  handler does not catch it -- the candidate is then left loaded in an open config session on
+  the router, which is the exact outcome the cleanup exists to prevent.
+  """
+
+
+
 def scp_config(host: str, user: str, password: str, src: str, remote_name: str) -> None:
   cmd = [ "sshpass","-p",password,"scp","-O",
           "-o","StrictHostKeyChecking=no","-o","UserKnownHostsFile=/dev/null",
@@ -58,7 +69,57 @@ def send(child, line: str, expect_pat: str, timeout: int = 120) -> str:
       continue
     if i == 2:
       return out
-    sys.exit(f"dnos-deploy: timeout/EOF waiting for prompt after {line!r}\n--- got ---\n{out}")
+    raise DeployError(f"timeout/EOF waiting for prompt after {line!r}\n--- got ---\n{out}")
+
+
+def discard_candidate(child) -> None:
+  """Best effort: discard the candidate and leave config mode. Never raises.
+
+  Called from the failure path, so it must not be able to fail in a way that skips the rest of
+  itself -- hence the per-step guards on BaseException rather than one try around the lot.
+  """
+  for step in ( lambda: send(child,"rollback 0",PROMPT_CFG,timeout=60),
+                lambda: child.sendline("exit"),
+                lambda: child.close(force=True) ):
+    try:
+      step()
+    except BaseException:                        # noqa: BLE001 - cleanup is best effort
+      pass
+
+
+def config_session(child, a, remote: str) -> str:
+  """Everything that happens inside configuration mode.
+
+  Raises DeployError on any failure; the caller guarantees the candidate is discarded. Returns
+  the line to print on success.
+  """
+  load = send(child,f"load merge {remote}",PROMPT_CFG)
+  if ERROR_PAT.search(load):
+    raise DeployError(f"load merge failed\n{load}")
+
+  diff = send(child,"show config compare | no-more",PROMPT_CFG)
+  if ERROR_PAT.search(diff):
+    raise DeployError(f"could not read the candidate diff\n{diff}")
+  print("--- candidate diff ---")
+  print(diff.strip())
+
+  chk = send(child,"commit check",PROMPT_CFG)
+  # A no-op deploy is a success, not a failure: DNOS answers an empty candidate with
+  # "commit action is not applicable", which is a NOTICE rather than an error.
+  if NOOP_PAT.search(chk):
+    send(child,"rollback 0",PROMPT_CFG)
+    return "--- nothing to do: candidate is empty, running config already matches ---"
+  if "passed successfully" not in chk:
+    raise DeployError(f"commit check FAILED\n{chk}")
+
+  if a.dry_run:
+    send(child,"rollback 0",PROMPT_CFG)
+    return "--- dry run: commit check passed, candidate discarded ---"
+
+  out = send(child,"commit",PROMPT_CFG)
+  if "Commit succeeded" not in out:
+    raise DeployError(f"commit FAILED\n{out}")
+  return "--- commit succeeded ---"
 
 
 def main() -> None:
@@ -84,48 +145,17 @@ def main() -> None:
 
   send(child,"configure",PROMPT_CFG)
 
-  def bail(msg: str) -> None:
-    """Discard the candidate and leave config mode before dying.
-
-    Bailing out without this leaves netlab's candidate loaded in an open config session on the
-    router, where the next operator to enter configuration mode inherits it.
-    """
-    try:
-      send(child,"rollback 0",PROMPT_CFG,timeout=60)
-      child.sendline("exit")
-      child.close(force=True)
-    except Exception:                          # noqa: BLE001 - best effort; the message matters more
-      pass
-    sys.exit(f"dnos-deploy: {msg}")
-
-  load = send(child,f"load merge {remote}",PROMPT_CFG)
-  if ERROR_PAT.search(load):
-    bail(f"load merge failed\n{load}")
-
-  diff = send(child,"show config compare | no-more",PROMPT_CFG)
-  print("--- candidate diff ---");  print(diff.strip())
-
-  chk = send(child,"commit check",PROMPT_CFG)
-  # A no-op deploy is a success, not a failure: DNOS answers an empty candidate with
-  # "commit action is not applicable", which is a NOTICE rather than an error. Treat that
-  # known-benign notice as done, and fail only on anything else.
-  if NOOP_PAT.search(chk):
-    send(child,"rollback 0",PROMPT_CFG)
-    print("--- nothing to do: candidate is empty, running config already matches ---")
-    child.sendline("exit")
-    child.close(force=True)
-    return
-  if "passed successfully" not in chk:
-    bail(f"commit check FAILED (candidate discarded)\n{chk}")
-
-  if a.dry_run:
-    send(child,"rollback 0",PROMPT_CFG)
-    print("--- dry run: commit check passed, candidate discarded ---")
-  else:
-    out = send(child,"commit",PROMPT_CFG)
-    if "Commit succeeded" not in out:
-      bail(f"commit FAILED\n{out}")
-    print("--- commit succeeded ---")
+  try:
+    print(config_session(child,a,remote))
+  except BaseException as exc:
+    # EVERY failure lands here, not only the ones we detect and name. A timeout, a dropped
+    # management link, a confirmation prompt whose wording CONFIRM does not match, Ctrl-C --
+    # all of them previously exited straight out of a live config session with the candidate
+    # still loaded. Fixing the known cause of one hang is not the same as closing the path.
+    discard_candidate(child)
+    if isinstance(exc,DeployError):
+      sys.exit(f"dnos-deploy: {exc}")
+    raise
 
   child.sendline("exit"); child.close(force=True)
 
