@@ -6,8 +6,18 @@
 # configure / load merge / commit check / commit. The script runs on the controller
 # (ansible_connection is local for this device), not on the box.
 #
-# Set netlab_dnos_dry_run=True to stop after "commit check" and discard the candidate --
-# useful when pointing netlab at production hardware.
+# DEFAULTS TO DRY RUN. This device is always physical hardware carrying someone else's traffic,
+# so "netlab initial" and "netlab config" stop after "commit check" and discard the candidate
+# unless the operator explicitly opts in:
+#
+#     groups:
+#       all:
+#         vars:
+#           netlab_dnos_commit: True
+#
+# A dry run still prints the real candidate diff and still fails the play if commit check fails,
+# so it is a genuine validation pass rather than a no-op -- what it does not do is change the
+# running configuration of a production router because someone typed "netlab initial".
 #
 - set_fact:
     dnos_cfg_file: "/tmp/dnos_{{ inventory_hostname }}_{{ netsim_action }}.cfg"
@@ -27,7 +37,7 @@
     --password-file {{ netlab_dnos_password_file|default("~/.dnos_pw") }}
     --config {{ dnos_cfg_file }}
     --name {{ dnos_remote_name }}
-    {{ "--dry-run" if netlab_dnos_dry_run|default(False) else "" }}
+    {{ "" if netlab_dnos_commit|default(False) else "--dry-run" }}
   register: dnos_deploy
   failed_when: dnos_deploy.rc != 0
   tags: [ print_action, always ]
