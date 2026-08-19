@@ -53,6 +53,36 @@ def send(child, line: str, expect_pat: str, timeout: int = 120) -> str:
     sys.exit(f"dnos-deploy: timeout/EOF waiting for prompt after {line!r}\n--- got ---\n{out}")
 
 
+SCOPE_PAT = re.compile(r"^(interfaces|protocols)\s*$")
+
+
+def config_scopes(cfg_text: str) -> list:
+  """Top-level scopes a rendered config touches, e.g. ['interfaces','protocols'].
+
+  Withdrawal has to RESTORE, not merely delete. netlab does not only add config: deploying an
+  interface with netlab's layer-3 MTU overwrote an mtu the box already had (9000 -> 1514), so
+  "no interfaces X" would drop the interface entirely and lose the original value. The snapshot
+  is what makes the original recoverable.
+  """
+  return [ l.strip() for l in cfg_text.splitlines() if SCOPE_PAT.match(l) ]
+
+
+def snapshot_path(snap_dir: str, host: str, name: str) -> str:
+  d = os.path.expanduser(snap_dir)
+  os.makedirs(d, exist_ok=True)
+  return os.path.join(d, f"{host}__{name}.snapshot")
+
+
+def capture_snapshot(child, cfg_text: str, path: str) -> None:
+  """Save the CURRENT config of every scope this deploy will touch."""
+  saved = []
+  for scope in config_scopes(cfg_text):
+    out = send(child, f"show config {scope} | no-more", PROMPT_CFG)
+    saved.append(out)
+  with open(path, "w") as f:
+    f.write("\n".join(saved))
+
+
 def main() -> None:
   ap = argparse.ArgumentParser()
   ap.add_argument("--host",required=True)
@@ -61,6 +91,10 @@ def main() -> None:
   ap.add_argument("--config",required=True,help="rendered DNOS config file")
   ap.add_argument("--name",default=None,help="remote file name under /config/")
   ap.add_argument("--dry-run",action="store_true",help="commit check only, then discard")
+  ap.add_argument("--withdraw",action="store_true",
+                  help="restore the pre-deploy snapshot for this node instead of deploying")
+  ap.add_argument("--snapshot-dir",default="~/.netlab-dnos-snapshots",
+                  help="where pre-deploy snapshots are kept")
   a = ap.parse_args()
 
   password = open(os.path.expanduser(a.password_file)).read().strip()
