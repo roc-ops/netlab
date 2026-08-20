@@ -1,10 +1,29 @@
----
-# netlab config-deploy task for OcNOS. Pushes the rendered config file
-# (config_template) to the node using the ipinfusion.ocnos Ansible collection over
-# ansible.netcommon.network_cli -- OcNOS's cmlsh restricted shell has no
-# non-interactive exec mode, so raw SSH command push (paramiko/netmiko) does not
+#
+# OcNOS configuration deployment.
+#
+# Uses the vendor ipinfusion.ocnos collection: the generic network_cli plugins do not
 # work; this collection ships the cliconf/terminal plugins that drive cmlsh
 # interactively. Requires: ansible-galaxy collection install ipinfusion.ocnos
+# (and paramiko, which network_cli needs for the SSH transport).
+#
+# BENIGN COMMIT NOTICES. OcNOS answers a SUCCESSFUL commit with informational text on
+# stdout, e.g. after an OSPF change:
+#
+#     Use "clear ip ospf process" command to take effect
+#     %% Use clear ipv6 ospf process command to take effect
+#
+# Nothing failed -- the device is saying the change needs a process clear before it takes
+# effect. ocnos_config cannot tell that apart from an error and raises, so a good deploy
+# is reported as a failure and netlab aborts.
+#
+# The failure condition therefore matches ERROR MARKERS rather than subtracting the
+# benign text. Subtraction was tried first and is fragile: the message arrives with
+# literal backslash-r/backslash-n escape sequences rather than real control characters,
+# so a filter chain written against one representation silently fails against the other.
+# Matching what an actual OcNOS error looks like does not depend on that.
+#
+# Deliberately NOT ignore_errors, which would swallow genuine failures too.
+#
 - name: "ocnos_config: deploying {{ netsim_action | default('config') }} from {{ config_template }}"
   ipinfusion.ocnos.ocnos_config:
     src: "{{ config_template }}"
@@ -14,4 +33,14 @@
     # re-deploys. Our templates are written to be re-runnable, so verbatim is
     # correct.
     match: none
+  register: _ocnos_deploy
+  failed_when:
+    - _ocnos_deploy.failed | default(false)
+    - _ocnos_deploy.msg | default('') | string is search('(?i)(unknown command|invalid input|syntax error|incomplete command|ambiguous command|command rejected|failed to|not supported)')
   tags: [ print_action, always ]
+
+- name: "note the benign OcNOS commit notice that was tolerated"
+  debug:
+    msg: "{{ inventory_hostname }}: commit OK, device notice: {{ _ocnos_deploy.msg | default('') }}"
+  when: _ocnos_deploy.failed | default(false)
+  tags: [ print_action ]
