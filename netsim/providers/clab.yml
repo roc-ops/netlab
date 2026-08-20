@@ -27,7 +27,23 @@ kmods:
   sr:  [ mpls-router, mpls-iptunnel ]
   vxlan: [ vxlan, udp_tunnel, ip6_udp_tunnel ]
   vrf: [ vrf ]
+# Secondary provider: external (pre-existing hardware).
+#
+# A clab-primary topology may contain nodes that netlab does not create -- physical switches
+# reached over SSH. Nothing is started or stopped for them (providers/external.yml has empty
+# start/stop/probe), so this entry exists purely to make the combination legal; augment/nodes.py
+# checks membership here before allowing a node to override the topology provider.
+external:
+  start: []
+  stop: []
+
 attributes:
+  # `global` permits topology-level `clab.*` settings. netlab records a mixed-provider topology
+  # as topology[<primary>].providers[<secondary>], so without this the very act of declaring an
+  # external node fails validation with "Invalid topology attribute 'clab'". libvirt already
+  # carries the identical declaration for its own secondary providers.
+  global:
+    providers:
   node:
     type: dict
     _keys:          # Make keys explicit to get around the 'type' attribute

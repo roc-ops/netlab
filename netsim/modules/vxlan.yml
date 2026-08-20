@@ -12,10 +12,15 @@ attributes:
     flooding: { type: str, valid_values: [ static, evpn ] }
     vlans: list
     use_v6_vtep: bool
+    # Name of a PRE-EXISTING BGP instance to bind L2VNIs into, for brownfield fabrics where
+    # netlab must not own BGP (the evpn module requires the bgp module, which would re-render
+    # the BGP carrying a production underlay). Unset => unchanged behaviour.
+    bgp_instance: str
   node:
     domain:
     flooding:
     vlans:
+    bgp_instance:
   link:
     vtep: bool
 no_propagate: [ use_v6_vtep, start_vni ]

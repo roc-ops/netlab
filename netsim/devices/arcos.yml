@@ -294,4 +294,10 @@ clab:
     netlab_ready: [ ansible ]              # skip the SSH readiness wait -- deploy doesn't need it
 external:
   image: none
+  group_vars:
+    # Physical switch: no container to exec into. Tasks run on the controller and reach the box
+    # over SSH via netlab_arcos_push.py (guardrail + two-lock gate). See
+    # netsim/ansible/tasks/deploy-config/arcos.yml.
+    ansible_connection: local
+    netlab_provider: external
 graphite.icon: router

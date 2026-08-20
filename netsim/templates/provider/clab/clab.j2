@@ -78,11 +78,14 @@ topology:
 {%     for nl in n.interfaces|default([]) if nl.linkindex|default(0) == l.linkindex %}
 {%       set clab = nl.clab|default({}) %}
   - endpoints:
+    - "{{ n.name }}:{{ clab.name|default(nl.ifname) }}"
+    - "macvlan:{{ l.clab.uplink }}"
+{#     mtu is a sibling of `endpoints`, not an element of it -- emitting it between the key and
+       its list items produced a mapping key inside a sequence and containerlab refused the whole
+       file ("did not find expected key"). #}
 {%       if nl.mtu is defined %}
     mtu: {{ nl.mtu }}
 {%       endif %}
-    - "{{ n.name }}:{{ clab.name|default(nl.ifname) }}"
-    - "macvlan:{{ l.clab.uplink }}"
 {%     endfor %}
 {%   endfor %}
 {% elif l.node_count == 1 %}
