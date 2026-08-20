@@ -14,15 +14,30 @@
 #
 # Nothing failed -- the device is saying the change needs a process clear before it takes
 # effect. ocnos_config cannot tell that apart from an error and raises, so a good deploy
-# is reported as a failure and netlab aborts.
+# is reported as failed and netlab aborts the run.
 #
-# The failure condition therefore matches ERROR MARKERS rather than subtracting the
-# benign text. Subtraction was tried first and is fragile: the message arrives with
-# literal backslash-r/backslash-n escape sequences rather than real control characters,
-# so a filter chain written against one representation silently fails against the other.
-# Matching what an actual OcNOS error looks like does not depend on that.
+# THE CONDITION FAILS BY DEFAULT AND TOLERATES ONLY WHAT IT RECOGNISES.
 #
-# Deliberately NOT ignore_errors, which would swallow genuine failures too.
+# An earlier version had this backwards: it listed error wordings and passed anything
+# else. That is unsafe here for a reason specific to this collection -- on its main
+# commit-failure path it raises AnsibleConnectionFailure with NO argument
+# (cliconf/ocnos.py), so the device's own text, including the literal "% Failed to
+# commit", is discarded before failed_when ever sees it. The message that arrives is
+# "Unexpected AnsibleConnectionFailure error.", which matches no error wording, so a
+# REJECTED COMMIT was reported green. An allowlist of errors cannot work against a
+# transport that throws the errors away.
+#
+# OcNOS error wording is also not enumerable: the collection's own ignored_errors list
+# carries 26 distinct real-world "%%" messages, and the semantic-validation layer emits
+# things like "% validation failed for", "% No such interface", "% Unrecognized command"
+# -- none of which resemble a fixed marker list.
+#
+# So: any module failure is a failure, UNLESS the message is recognisably the benign
+# "take effect" notice. Unknown errors, bare raises and empty messages all fail, which is
+# the safe direction. A hard error marker still fails even if it appears alongside the
+# notice, so a rejected commit cannot hide behind one.
+#
+# Deliberately NOT ignore_errors, which would swallow everything.
 #
 - name: "ocnos_config: deploying {{ netsim_action | default('config') }} from {{ config_template }}"
   ipinfusion.ocnos.ocnos_config:
@@ -34,13 +49,22 @@
     # correct.
     match: none
   register: _ocnos_deploy
-  failed_when:
-    - _ocnos_deploy.failed | default(false)
-    - _ocnos_deploy.msg | default('') | string is search('(?i)(unknown command|invalid input|syntax error|incomplete command|ambiguous command|command rejected|failed to|not supported)')
+  failed_when: >-
+    (_ocnos_deploy.failed | default(false))
+    and (
+      not (_ocnos_deploy.msg | default('') | string is search('(?i)to take effect'))
+      or (_ocnos_deploy.msg | default('') | string is search('(?i)(validation failed|unrecognized|invalid input|syntax error|incomplete command|ambiguous|no such|rejected|failed to commit)'))
+    )
   tags: [ print_action, always ]
 
+# Keyed on the MESSAGE, not on _ocnos_deploy.failed: Ansible overwrites result['failed']
+# with the failed_when outcome, so by the time this runs .failed is already False in the
+# tolerated case and the task would never fire -- and in the failing case the play has
+# already aborted. Keying on the message is the only way this reports what it claims.
 - name: "note the benign OcNOS commit notice that was tolerated"
   debug:
-    msg: "{{ inventory_hostname }}: commit OK, device notice: {{ _ocnos_deploy.msg | default('') }}"
-  when: _ocnos_deploy.failed | default(false)
+    msg: "{{ inventory_hostname }}: commit accepted with device notice: {{ _ocnos_deploy.msg | default('') }}"
+  when:
+    - _ocnos_deploy.msg | default('') | string is search('(?i)to take effect')
+    - not (_ocnos_deploy.failed | default(false))
   tags: [ print_action ]
