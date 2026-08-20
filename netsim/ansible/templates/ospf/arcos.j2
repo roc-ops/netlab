@@ -77,7 +77,9 @@ network-instance default protocol OSPF p{{ pid }}
  global router-id {{ ospf.router_id }}
  global log-adjacency-changes LOG_ADJ_ENABLE_DETAILED
  area {{ ospf.area | default("0.0.0.0") }}
-{% if loopback.ipv4 is defined %}
+{# netlab_manage_identity: on an external (pre-existing) device the system loopback is not
+   netlab's to enrol in an OSPF area -- see netsim/providers/external.py. #}
+{% if loopback.ipv4 is defined and netlab_manage_identity|default(True) %}
   interface loopback0
 {% endif %}
 {{ area_interfaces('ipv4') }}
@@ -88,7 +90,7 @@ network-instance default protocol OSPF3 p{{ pid }}
  global router-id {{ ospf.router_id }}
  global log-adjacency-changes LOG_ADJ_ENABLE_DETAILED
  area {{ area3 }}
-{% if loopback.ipv6 is defined %}
+{% if loopback.ipv6 is defined and netlab_manage_identity|default(True) %}
   interface loopback0
 {% endif %}
 {{ area_interfaces('ipv6') }}

@@ -23,8 +23,19 @@
   clab.j2 fix (containerlab veth 'mtu:' link property) which controls the INITIAL veth MTU
   before ArcOS's own confd interface bring-up runs -- both layers now agree.
 #}
+{# netlab_manage_identity is False by default for external-provider nodes (see
+   netsim/providers/external.py): a physical switch already in service has a hostname, and
+   renaming it out from under the operator is not netlab's call. Containerlab nodes are
+   unaffected -- netlab created them, so it owns their identity. #}
+{% if netlab_manage_identity|default(True) %}
 system hostname {{ inventory_hostname }}
 !
+{% endif %}
+{# On a pre-existing physical device the system loopback is LOAD-BEARING: on the ArcOS fabric
+   loopback0 is the EVPN router-id and the VTEP source for the live underlay, so re-rendering it
+   as netlab thinks it should be would drop the fabric. Additional loopbacks below are netlab's
+   own and are still configured. #}
+{% if netlab_manage_identity|default(True) %}
 interface loopback0
  enable true
  subinterface 0
@@ -35,6 +46,7 @@ interface loopback0
    ipv6 address {{ loopback.ipv6 | ansible.netcommon.ipv6("address") }} prefix-length 128
 {% endif %}
 !
+{% endif %}
 {% for l in interfaces|default([]) if l.type|default('') == 'loopback' and l.ifname != 'loopback0' %}
 interface {{ l.ifname }}
  enable true

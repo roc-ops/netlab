@@ -78,7 +78,48 @@
     src: "{{ config_template }}"
     dest: "/tmp/netlab-{{ netsim_action }}.cfg"
 
+# ---------------------------------------------------------------------------------------------
+# PHYSICAL (external provider) nodes: push through the audited, guardrailed transport.
+#
+# The docker-exec task below cannot reach a physical switch, and the arrcus.arcos collection is
+# broken against this ArcOS build (see the header). The proven path for real hardware is the raw
+# `config` / `load merge` / `commit` / `end` sequence -- which is what Transport.apply_push does.
+# Routing netlab's push through it means every byte netlab sends to the production fabric is
+# scanned against that switch's LIVE protected set (mgmt/aaa/ssh, L3-addressed interfaces, and
+# any port carrying a `description "PROTECT: ..."` marker) and gated by two locks. Without
+# ARCOS_HW_ALLOW_PUSH=YES exported, netlab CANNOT touch the hardware -- deliberate act, not a
+# side effect of `netlab up`.
+# ---------------------------------------------------------------------------------------------
+- name: "guardrailed push to physical ArcOS ({{ inventory_hostname }})"
+  when: netlab_provider|default('') == 'external'
+  delegate_to: localhost
+  vars:
+    _push: "{{ lookup('env','HOME') }}/roccontlab/scripts/fabric-xc/netlab_arcos_push.py"
+  block:
+    - name: "copy rendered config to the controller"
+      copy:
+        src: "/tmp/netlab-{{ netsim_action }}.cfg"
+        dest: "/tmp/netlab-{{ inventory_hostname }}-{{ netsim_action }}.cfg"
+        mode: "0600"
+
+    - name: "guardrail scan + gated commit"
+      command: >-
+        {{ _push }}
+        --host {{ ansible_host }}
+        --config /tmp/netlab-{{ inventory_hostname }}-{{ netsim_action }}.cfg
+        --node {{ inventory_hostname }}
+      register: arcos_hw_push
+      changed_when: "'Commit complete' in arcos_hw_push.stdout"
+      failed_when: arcos_hw_push.rc != 0
+
+    - name: "report"
+      debug:
+        msg: "{{ arcos_hw_push.stdout_lines }}"
+
 - name: "confd_cli: load merge + commit {{ netsim_action }} config (one commit per #COMMIT chunk)"
+  # Container nodes only -- see the external-provider block above. netlab_provider
+  # is 'clab' for containerlab nodes and 'external' for pre-existing hardware.
+  when: netlab_provider|default('clab') != 'external'
   # Retries each chunk on "configuration database is locked by session none" -- a transient
   # confd lock (live-observed shortly after the mgmt bootstrap's own confd_cli session on the
   # same node; it clears within a few seconds on its own, same class of issue as the confd
