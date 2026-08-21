@@ -102,7 +102,7 @@ router ospf {{ pid }}
      the attribute -- including `ospf.passive: false` -- so it always fired and the empty stanza
      survived. #}
 {%   set _o6 = (ospf.router_id is defined and netlab_manage_identity|default(True))
-               or netlab_interfaces|default([])|selectattr('ospf.passive','eq',True)|list %}
+               or netlab_interfaces|default([])|selectattr('ospf.passive','defined')|selectattr('ospf.passive','eq',True)|list %}
 {%   if _o6 %}
 router ospf6 {{ pid }}
 {#   Single value: it REPLACES the production router-id, so it is guarded exactly as the
