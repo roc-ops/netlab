@@ -15,7 +15,13 @@ attributes:
     # Name of a PRE-EXISTING BGP instance to bind L2VNIs into, for brownfield fabrics where
     # netlab must not own BGP (the evpn module requires the bgp module, which would re-render
     # the BGP carrying a production underlay). Unset => unchanged behaviour.
-    bgp_instance: str
+    # Interpolated directly into a confd config line, so it must not be able to carry a
+    # newline (which would inject further configuration -- and indented injected lines
+    # historically slipped past the guardrail).
+    # `id`, not `str`: this value is interpolated directly into a confd config line, so it must
+    # not be able to carry a newline (which would inject further configuration -- and indented
+    # injected lines slipped past the guardrail). must_be_id fullmatches [a-zA-Z_][a-zA-Z0-9_-]*.
+    bgp_instance: id
   node:
     domain:
     flooding:

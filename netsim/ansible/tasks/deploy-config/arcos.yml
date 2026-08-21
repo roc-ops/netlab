@@ -76,7 +76,12 @@
 - name: Render candidate config on the controller
   template:
     src: "{{ config_template }}"
-    dest: "/tmp/netlab-{{ netsim_action }}.cfg"
+    # PER-HOST path. This was shared (/tmp/netlab-<action>.cfg), which was safe only while
+    # external nodes used ansible_connection: docker and the file landed inside each container.
+    # With `local`, every external node writes the SAME controller file, and Ansible renders for
+    # all hosts before any later task runs -- so the last render won and one leaf was pushed
+    # another leaf's config.
+    dest: "/tmp/netlab-{{ inventory_hostname }}-{{ netsim_action }}.cfg"
 
 # ---------------------------------------------------------------------------------------------
 # PHYSICAL (external provider) nodes: push through the audited, guardrailed transport.
@@ -96,12 +101,6 @@
   vars:
     _push: "{{ lookup('env','HOME') }}/roccontlab/scripts/fabric-xc/netlab_arcos_push.py"
   block:
-    - name: "copy rendered config to the controller"
-      copy:
-        src: "/tmp/netlab-{{ netsim_action }}.cfg"
-        dest: "/tmp/netlab-{{ inventory_hostname }}-{{ netsim_action }}.cfg"
-        mode: "0600"
-
     - name: "guardrail scan + gated commit"
       command: >-
         {{ _push }}
