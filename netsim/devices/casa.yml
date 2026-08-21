@@ -141,9 +141,11 @@ features:
   vlan:
     model: router
     subif_name: "vlan {vlan.access_id}"
-    # The CMTS has no separate SVI concept: `interface vlan <id>` IS both the tagged
-    # subinterface and the L3 interface for that VLAN, so both names are the same form.
-    svi_interface_name: "vlan {vlan}"
+    # NO svi_interface_name, on purpose. That setting is consulted only for a VLAN this node
+    # BRIDGES, and the Casa has no bridging: it would render an `interface vlan <id>` with no
+    # encapsulation and no member port -- config that commits and forwards nothing. Leaving it
+    # undeclared makes netlab reject a non-routed VLAN outright instead. Every VLAN the Casa
+    # joins needs `mode: route`.
     mixed_trunk: true
     native_routed: false
   initial:

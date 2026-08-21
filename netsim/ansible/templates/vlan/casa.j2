@@ -1,0 +1,15 @@
+{#
+  Casa CMTS -- vlan module. DELIBERATELY EMITS NOTHING. Do not "fill this in".
+
+  The Casa is a vlan.model: router device: a VLAN it participates in is a routed tagged
+  subinterface (`interface vlan <id>` + `encapsulation dot1q` + a bare member-port line),
+  never a bridge with an SVI. netlab creates those subinterfaces during transformation, so
+  they are already present in `netlab_interfaces` by the time initial/casa.j2 runs -- and
+  initial/casa.j2 renders every one of their attributes, including the ones only a tagged
+  interface has. There is nothing left for the vlan module to add.
+
+  netlab still requires a template to exist for each module a node runs, hence this file.
+
+  Bridged VLANs cannot reach this template: devices/casa.yml deliberately declares no
+  svi_interface_name, so netlab rejects a non-routed VLAN on this device up front.
+#}

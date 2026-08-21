@@ -30,11 +30,21 @@ interface {{ l.ifname }}
 {% if l.name is defined and netlab_manage_identity|default(True) %}
   description "{{ l.name }}{{ " ["+l.role+"]" if l.role is defined else "" }}"
 {% endif %}
+{# A VLAN subinterface needs dot1q encapsulation and a member-port line, and the vlan module
+   knows about neither -- `encapsulation`/`parent` are device-scoped NSI attributes. Without
+   them the box gets `interface vlan <id>` with an address, no encapsulation and no member
+   port: config that commits and forwards nothing. Everything required is already on the
+   interface (type == 'vlan_member', plus parent_ifname filled in during transformation), so
+   derive it. An explicit attribute still wins -- hand-written NSI config means what it says. #}
 {% if l.encapsulation is defined %}
   encapsulation {{ l.encapsulation }}
+{% elif l.type|default('') == 'vlan_member' %}
+  encapsulation dot1q
 {% endif %}
 {% if l.parent is defined %}
   {{ l.parent }}
+{% elif l.type|default('') == 'vlan_member' and l.parent_ifname is defined %}
+  {{ l.parent_ifname }}
 {% endif %}
 {% if l.mtu is defined %}
   mtu {{ l.mtu }}
