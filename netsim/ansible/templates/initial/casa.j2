@@ -5,9 +5,19 @@
   netlab renders the artifact, never deploys. IPv4 = dotted netmask, IPv6 = CIDR. netlab_interfaces =
   [loopback] + interfaces (loopback first); mgmt is NOT in the list (lives in `mgmt`).
 #}
+{# netlab_manage_identity is False by default for external-provider nodes (see
+   netsim/providers/external.py): a CMTS already in service has a hostname, and
+   renaming it out from under the operator is not netlab's call. #}
+{% if netlab_manage_identity|default(True) %}
 hostname {{ inventory_hostname.replace("_","-") }}
 !
-{% for l in netlab_interfaces %}
+{% endif %}
+{# The SYSTEM loopback on a pre-existing CMTS is load-bearing (it anchors the OSPF
+   router-id and is the source-interface for logging/ipdr), and netlab's idea of it
+   is not the box's -- this Casa uses loopback 1, not loopback 0. Skip it unless
+   netlab is the owner of record. Additional loopbacks are netlab's own. #}
+{% for l in netlab_interfaces
+     if netlab_manage_identity|default(True) or l.ifname != loopback.ifname|default('') %}
 interface {{ l.ifname }}
 {% for m in l.lag_members|default([]) %}
   {{ m.port }} mode {{ m.mode }}

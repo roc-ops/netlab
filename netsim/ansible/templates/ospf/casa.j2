@@ -53,7 +53,9 @@ interface {{ l.ifname }}
 {%   if l.ospf.bfd.ipv6|default(False) %}
   ipv6 ospf bfd
 {%   endif %}
-{%   if v6 %}
+{#   Same guard as the OSPFv2 side: do not enrol the SYSTEM loopback of a device netlab did
+     not build. Without this the identity leaks through the v6 family instead. #}
+{%   if v6 and (netlab_manage_identity|default(True) or l.ifname != loopback.ifname|default('')) %}
   ipv6 router ospf {{ pid }} area {{ l.ospf.area }}
 {%   endif %}
 !
@@ -62,13 +64,19 @@ interface {{ l.ifname }}
 {# ---- OSPFv2 (IPv4): router mode + network statements ---- #}
 {% if 'ipv4' in ospf.af %}
 router ospf {{ pid }}
-{%   if ospf.router_id is defined %}
+{#   The router-id is a SINGLE value, so unlike the additive network statements below it
+     would REPLACE the production one (10.80.255.6 on this CMTS). Not netlab's to set on a
+     device it did not build. #}
+{%   if ospf.router_id is defined and netlab_manage_identity|default(True) %}
   router-id {{ ospf.router_id }}
 {%   endif %}
 {%   if ospf.reference_bandwidth is defined %}
   auto-cost reference-bandwidth {{ ospf.reference_bandwidth }}
 {%   endif %}
-{%   for l in netlab_interfaces|default([]) if 'ospf' in l and 'ipv4' in l and l.ipv4 is string %}
+{#   Skip the system loopback's network statement on a pre-existing device: netlab would be
+     advertising a loopback the box does not have. #}
+{%   for l in netlab_interfaces|default([]) if 'ospf' in l and 'ipv4' in l and l.ipv4 is string
+       and (netlab_manage_identity|default(True) or l.ifname != loopback.ifname|default('')) %}
   network {{ l.ipv4|ansible.utils.ipaddr('subnet') }} area {{ l.ospf.area }}
 {%   endfor %}
 {%   for l in netlab_interfaces|default([]) if 'ospf' in l and l.ospf.passive|default(False) %}
@@ -79,7 +87,9 @@ router ospf {{ pid }}
 {# ---- OSPFv3 (IPv6): router mode (interfaces enabled above) ---- #}
 {% if 'ipv6' in ospf.af %}
 router ospf6 {{ pid }}
-{%   if ospf.router_id is defined %}
+{#   Single value: it REPLACES the production router-id, so it is guarded exactly as the
+     OSPFv2 one is. #}
+{%   if ospf.router_id is defined and netlab_manage_identity|default(True) %}
   router-id {{ ospf.router_id }}
 {%   endif %}
 {%   for l in netlab_interfaces|default([]) if 'ospf' in l and 'ipv6' in l and l.ospf.passive|default(False) %}
