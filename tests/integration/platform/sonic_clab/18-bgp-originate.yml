@@ -16,4 +16,4 @@ nodes:
   s2:
     bgp.as: 65002
 links:
-  - s1-s2
+- s1-s2

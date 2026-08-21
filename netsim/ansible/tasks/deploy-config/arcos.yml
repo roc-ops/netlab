@@ -101,19 +101,19 @@
   vars:
     _push: "{{ lookup('env','HOME') }}/roccontlab/scripts/fabric-xc/netlab_arcos_push.py"
   block:
-    - name: "guardrail scan + gated commit"
-      command: >-
-        {{ _push }}
-        --host {{ ansible_host }}
-        --config /tmp/netlab-{{ inventory_hostname }}-{{ netsim_action }}.cfg
-        --node {{ inventory_hostname }}
-      register: arcos_hw_push
-      changed_when: "'Commit complete' in arcos_hw_push.stdout"
-      failed_when: arcos_hw_push.rc != 0
+  - name: "guardrail scan + gated commit"
+    command: >-
+      {{ _push }}
+      --host {{ ansible_host }}
+      --config /tmp/netlab-{{ inventory_hostname }}-{{ netsim_action }}.cfg
+      --node {{ inventory_hostname }}
+    register: arcos_hw_push
+    changed_when: "'Commit complete' in arcos_hw_push.stdout"
+    failed_when: arcos_hw_push.rc != 0
 
-    - name: "report"
-      debug:
-        msg: "{{ arcos_hw_push.stdout_lines }}"
+  - name: "report"
+    debug:
+      msg: "{{ arcos_hw_push.stdout_lines }}"
 
 - name: "confd_cli: load merge + commit {{ netsim_action }} config (one commit per #COMMIT chunk)"
   # Container nodes only -- see the external-provider block above. netlab_provider
