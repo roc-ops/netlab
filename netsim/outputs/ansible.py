@@ -84,7 +84,19 @@ def create(topology: Box) -> Box:
     for group in inventory.keys():
       if group in defaults.devices:
         devdata = defaults.devices[group]
-        group_vars = devdata.group_vars + devdata[defaults.provider].group_vars
+        # Merge the group_vars of every provider actually in use by nodes of this device, not
+        # just the topology-wide one. In a mixed-provider topology (clab primary + external
+        # hardware) a node on the secondary provider would otherwise receive the PRIMARY
+        # provider's group_vars and have its own silently dropped -- which made every Ansible
+        # task against an external Casa fail UNREACHABLE, because the device-level
+        # `ansible_connection: network_cli` survived instead of the external `local`.
+        node_providers = {
+          n.get('provider', None) or defaults.provider
+            for n in topology.nodes.values() if n.get('device', None) == group }
+        group_vars = devdata.group_vars
+        for p_name in [defaults.provider] + sorted(node_providers - {defaults.provider}):
+          if p_name in devdata:
+            group_vars = group_vars + devdata[p_name].group_vars
         # add device features to device group_vars
         group_vars.features = devdata.features
         if group_vars:
