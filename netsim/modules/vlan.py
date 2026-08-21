@@ -419,6 +419,14 @@ def validate_trunk_vlan_list(link: Box) -> bool:
       if vname == o_intf.vlan.get('native',None) and needs_native:    # But maybe we found a native VLAN that someone needs?
         continue
 
+      if len(link.interfaces) < 2:                                    # Nobody else is MODELLED on this link
+        # A link with a single interface has no peer for the VLAN to match against -- the far
+        # end is a device netlab does not model (a physical switch port facing a server NIC or
+        # a CMTS). "No other node uses this VLAN" is vacuously true there, not an error. A
+        # two-interface link with a mismatched trunk still fails, which is what this check is
+        # actually for.
+        continue
+
       log.error(
         f'VLAN {vname} used by node {o_intf.node} on {link._linkname} is not used by any other node on that link',
         log.IncorrectValue,

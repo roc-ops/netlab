@@ -20,7 +20,10 @@ vlan {{ vdata.id }} name {{ vname }}
 interface {{ l.ifname }} ethernet switched-vlan interface-mode ACCESS access-vlan {{ l.vlan.access_id }}
 {% elif l.vlan is defined and l.vlan.trunk is defined %}
 interface {{ l.ifname }} ethernet switched-vlan interface-mode TRUNK
-{#- native VLAN on a trunk: a SEPARATE leaf alongside trunk-vlans. Live probe found it MUST be
+{# NOTE: this comment must NOT open with `{#-` -- the whitespace-stripping marker eats the
+   newline above and merges `interface-mode TRUNK` with the trunk-vlans command below into a
+   single malformed line.
+   native VLAN on a trunk: a SEPARATE leaf alongside trunk-vlans. Live probe found it MUST be
     excluded from trunk-vlans ("Native vlan N cannot be in trunk-vlans list" on commit) even
     though netlab's own vlan.native/vlan.trunk model keeps the native vlan IN the trunk list --
     so the trunk-vlans loop below filters it out. -#}
