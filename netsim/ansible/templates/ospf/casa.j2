@@ -16,11 +16,18 @@
 {%   set is_phys = l.type not in ['loopback','tunnel'] %}
 {#   OSPFv2 needs no interface stanza for a loopback (covered by the network statement);
      only emit a stanza when something actually renders under it. #}
+{#   `v6` alone is not enough: netlab_manage_identity suppresses the ipv6-router line for the
+     SYSTEM loopback on a pre-existing device, which used to leave an EMPTY `interface loopback 0`
+     stanza behind. On a guarded device that is fatal, not cosmetic -- the allow-list refuses a
+     stanza for an interface netlab does not own, so one empty header makes the whole module
+     unpushable. Only count v6 when its line will actually render. #}
+{%   set v6_emits = v6 and (netlab_manage_identity|default(True)
+                            or l.ifname != loopback.ifname|default('')) %}
 {%   set emit_if = (l.ospf.network_type is defined and is_phys)
                    or l.ospf.cost is defined
                    or (l.ospf.priority is defined and is_phys)
                    or l.ospf.bfd.ipv4|default(False) or l.ospf.bfd.ipv6|default(False)
-                   or v6 %}
+                   or v6_emits %}
 {%   if emit_if %}
 interface {{ l.ifname }}
 {%   if l.ospf.network_type is defined and l.type not in ['loopback','tunnel'] %}
@@ -86,6 +93,17 @@ router ospf {{ pid }}
 {% endif %}
 {# ---- OSPFv3 (IPv6): router mode (interfaces enabled above) ---- #}
 {% if 'ipv6' in ospf.af %}
+{#- Skip an empty `router ospf6` stanza for the same reason as above: with the router-id
+    suppressed by netlab_manage_identity and no passive interfaces, the header alone would be
+    refused by a device guardrail. -#}
+{#   Emit the stanza only when something will actually go INSIDE it: a router-id we are allowed
+     to set, or at least one genuinely passive interface. The previous condition used
+     selectattr('ospf.passive','defined'), which is true for every interface that merely MENTIONS
+     the attribute -- including `ospf.passive: false` -- so it always fired and the empty stanza
+     survived. #}
+{%   set _o6 = (ospf.router_id is defined and netlab_manage_identity|default(True))
+               or netlab_interfaces|default([])|selectattr('ospf.passive','eq',True)|list %}
+{%   if _o6 %}
 router ospf6 {{ pid }}
 {#   Single value: it REPLACES the production router-id, so it is guarded exactly as the
      OSPFv2 one is. #}
@@ -96,4 +114,5 @@ router ospf6 {{ pid }}
   passive-interface {{ l.ifname }}
 {%   endfor %}
 !
+{%   endif %}
 {% endif %}
