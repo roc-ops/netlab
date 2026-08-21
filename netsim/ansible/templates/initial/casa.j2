@@ -29,6 +29,20 @@ interface {{ l.ifname }}
    device's identity, and a description is part of that. #}
 {% if l.name is defined and netlab_manage_identity|default(True) %}
   description "{{ l.name }}{{ " ["+l.role+"]" if l.role is defined else "" }}"
+{% elif l.type|default('') == 'vlan_member' and l.parent_ifname is defined %}
+{#  A subinterface netlab CREATED carries the delegation marker, so it is delegated on the next
+    read through the same mechanism as a physical port. Without it the write path refused every
+    re-push: the interface netlab made yesterday looked like the operator's today, and `netlab
+    config` failed from the second run onwards.
+
+    This is not the case netlab_manage_identity guards. That flag exists because a description
+    on a PRE-EXISTING physical port IS the operator's delegation marker, and rendering over it
+    would un-delegate the port on the very push it was delegated for. There is no operator
+    description on an interface that did not exist a moment ago.
+
+    Kept within the guardrail's bounded description charset -- this string is sent verbatim to
+    a device with no rollback. #}
+  description "NETLAB: vlan {{ l.vlan.access_id }} subinterface on {{ l.parent_ifname }}"
 {% endif %}
 {# A VLAN subinterface needs dot1q encapsulation and a member-port line, and the vlan module
    knows about neither -- `encapsulation`/`parent` are device-scoped NSI attributes. Without
@@ -38,7 +52,11 @@ interface {{ l.ifname }}
    derive it. An explicit attribute still wins -- hand-written NSI config means what it says. #}
 {% if l.encapsulation is defined %}
   encapsulation {{ l.encapsulation }}
-{% elif l.type|default('') == 'vlan_member' %}
+{% elif l.type|default('') == 'vlan_member' and l.parent_ifname is defined %}
+{#  parent_ifname, not just vlan_member: the two branches must agree. vlan.py short-circuits
+    before assigning parent_ifname for a VLAN-loopback member, and gating only the member-port
+    line on it rendered `encapsulation dot1q` with no member port -- the addressed-but-dead
+    interface this change exists to prevent. #}
   encapsulation dot1q
 {% endif %}
 {% if l.parent is defined %}

@@ -60,7 +60,17 @@ interface {{ l.ifname }}
 {% for l in interfaces|default([]) if l.type|default('') == 'lag' %}
 interface {{ l.ifname }}
  enable true
-{% if l.mtu is defined %}
+{% if l.mtu is defined and (netlab_provider|default('') != 'external' or l.mtu == mtu|default(-1)) %}
+{#  A pre-existing physical switch keeps the operator's MTU. netlab treats MTU as a LINK
+    property, so a container endpoint sharing the segment propagates its 1500 to the fabric
+    ports and renders `mtu 1526` onto hardware carrying a 9900-MTU pseudowire -- the guardrail
+    refused exactly that. Same argument as netlab_manage_identity, and with a worse failure
+    mode: a too-small MTU blackholes traffic instead of just renaming something.
+
+    `l.mtu == mtu` is the opt-in: netlab copies a node-level `mtu` onto every interface of
+    that node, so an interface MTU equal to the node's own was asked for on this device BY
+    NAME, while one that differs was inherited from the link or a peer. No new attribute
+    needed -- and unlike the `mtu_explicit` flag this first read, it actually exists. #}
  mtu {{ l.mtu + 26 }}
 {% endif %}
  subinterface 0
@@ -76,7 +86,17 @@ interface {{ l.ifname }}
 {% for l in interfaces|default([]) if not l.virtual_interface|default(false) and l.lag._parentindex is not defined and l.type|default('') != 'lag' %}
 interface {{ l.ifname }}
  enable true
-{% if l.mtu is defined %}
+{% if l.mtu is defined and (netlab_provider|default('') != 'external' or l.mtu == mtu|default(-1)) %}
+{#  A pre-existing physical switch keeps the operator's MTU. netlab treats MTU as a LINK
+    property, so a container endpoint sharing the segment propagates its 1500 to the fabric
+    ports and renders `mtu 1526` onto hardware carrying a 9900-MTU pseudowire -- the guardrail
+    refused exactly that. Same argument as netlab_manage_identity, and with a worse failure
+    mode: a too-small MTU blackholes traffic instead of just renaming something.
+
+    `l.mtu == mtu` is the opt-in: netlab copies a node-level `mtu` onto every interface of
+    that node, so an interface MTU equal to the node's own was asked for on this device BY
+    NAME, while one that differs was inherited from the link or a peer. No new attribute
+    needed -- and unlike the `mtu_explicit` flag this first read, it actually exists. #}
  mtu {{ l.mtu + 26 }}
 {% endif %}
 {% if not (l.vlan is defined and (l.vlan.access is defined or l.vlan.trunk is defined)) %}
