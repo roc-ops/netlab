@@ -22,7 +22,12 @@ interface {{ l.ifname }}
 {% for m in l.lag_members|default([]) %}
   {{ m.port }} mode {{ m.mode }}
 {% endfor %}
-{% if l.name is defined %}
+{# On a pre-existing device the interface description belongs to the OPERATOR, and on the Casa
+   it is load-bearing: description "NETLAB: ..." is what delegates a port to netlab. Rendering
+   our own description over it un-delegates the port on the very push it was delegated for, so
+   the service would work exactly once. netlab_manage_identity already records who owns this
+   device's identity, and a description is part of that. #}
+{% if l.name is defined and netlab_manage_identity|default(True) %}
   description "{{ l.name }}{{ " ["+l.role+"]" if l.role is defined else "" }}"
 {% endif %}
 {% if l.encapsulation is defined %}
