@@ -1,5 +1,5 @@
 {#
-  ArcOS SRv6 template (issue #39). SRv6 lives under `network-instance default srv6`
+  ArcOS SRv6 template. SRv6 lives under `network-instance default srv6`
   (encapsulation + locator) and binds to IS-IS via `protocol ISIS i1 global srv6
   enabled true|locator <name>`. ArcOS derives an End SID from the locator prefix automatically.
   netlab data: srv6.locator (per-node /48 from srv6.locator_pool), srv6.igp. Only isis is

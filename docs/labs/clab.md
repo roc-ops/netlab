@@ -1,12 +1,16 @@
 (lab-clab)=
 # Using Containerlab with *netlab*
 
-[Containerlab](https://containerlab.srlinux.dev/) is a Linux-based container orchestration system that creates virtual network topologies using containers as network devices. To use it:
+[Containerlab](https://containerlab.dev/) is a Linux-based container orchestration system that creates virtual network topologies using containers as network devices. To use it:
 
-* Use **[netlab install containerlab](../netlab/install.md)** on Ubuntu, or follow the [containerlab installation guide](https://containerlab.srlinux.dev/install/) on other Linux distributions.
+* Use **[netlab install containerlab](../netlab/install.md)** on Ubuntu, or follow the [containerlab installation guide](https://containerlab.dev/install/) on other Linux distributions.
 * Install network device container images
 * Create [lab topology file](../topology-overview.md). Use `provider: clab` in lab topology to select the *containerlab* virtualization provider.
 * Start the lab with **[netlab up](../netlab/up.md)**
+
+```{warning}
+You have to be a member of the `clab_admins` group to start a _containerlab_ lab, and a member of the `docker` group to use Docker containers. If you used **netlab install containerlab**, these group memberships are configured automatically; use the **sudo usermod -aG _group_ _user_** command to add additional users to these groups.
+```
 
 ```eval_rst
 .. contents:: Table of Contents
@@ -56,12 +60,13 @@ Lab topology file created by **[netlab up](../netlab/up.md)** or **[netlab creat
 | Mikrotik RouterOS 7    | vrnetlab/vr-routeros:7.6     |
 | Nokia SR Linux         | ghcr.io/nokia/srlinux:24.10.1 |
 | Nokia SR OS            | vrnetlab/vr-sros:latest      |
+| VPP [❗](build-vpp)    | netlab/vpp:latest            |
 | VyOS                   | ghcr.io/sysoleg/vyos-container |
 
-* Cumulus VX, FRR, Linux, Nokia SR Linux, and VyOS images are automatically downloaded from public container registries.
-* Build the BIRD, dnsmasq, and Netscaler images with the **netlab clab build** command. BIRD supports several build targets and configurable source releases — see [](build-bird) for details.
+* FRR, Linux, Nokia SR Linux, and VyOS images are automatically downloaded from public container registries.
+* Build the [BIRD](build-bird), dnsmasq, [VPP](build-vpp), and [Netscaler](build-netscaler) images with the **netlab clab build** command. BIRD and VPP FD.io build process supports configurable software releases.
 * The Arista cEOS image has to be [downloaded and installed manually](ceos.md).
-* Nokia SR OS and SR-SIM container images require a license; see also [vrnetlab instructions](https://containerlab.srlinux.dev/manual/vrnetlab/).
+* Nokia SR OS and SR-SIM container images require a license; see also [vrnetlab instructions](https://containerlab.dev/manual/vrnetlab/).
 * Follow Cisco's documentation to install the IOS XRd container, making sure the container image name matches the one _netlab_ uses (alternatively, [change the default image name](default-device-image) for the IOS XRd container).
 * Cisco 8000v containerlab image (once you manage to get it) has to be  [installed](https://containerlab.dev/manual/kinds/c8000/#getting-cisco-8000-containerlab-docker-images) with the **docker image load** command.
 
@@ -136,7 +141,7 @@ In multi-provider topologies, set the **uplink** parameter only for the primary 
 *containerlab* creates a dedicated Docker network to connect the container management interfaces to the host TCP/IP stack. You can change the management network parameters in the **addressing.mgmt** pool:
 
 * **ipv4**: The IPv4 prefix used for the management network (default: `192.168.121.0/24`)
-* **ipv6**: Optional IPv6 management network prefix. It's not set by default.
+* **ipv6**: Optional IPv6 management network prefix (`fd00:df:1ab::/64` is configured on the management Docker network when this parameter is not set).
 * **start**: The offset of the first management IP address in the management network (default: `100`). For example, with **start** set to 50, the device with **node.id** set to 1 will get the 51st IP address in the management IP prefix.
 * **\_network**: The Docker network name (default: `netlab_mgmt`)
 * **\_bridge**: The name of the underlying Linux bridge (default: unspecified, created by Docker)
@@ -239,9 +244,18 @@ $ netlab defaults devices.iosv.clab.group_vars.ansible_ssh_pass=Baggins
 (vrnetlab-internal-net)=
 ### Internal Container Networking
 
-The packaged container's architecture requires an internal network. The [*vrnetlab* fork](https://github.com/srl-labs/vrnetlab) supported by *containerlab* uses the IPv4 prefix 10.0.0.0/24 on that network, which clashes with the *netlab* loopback address pool. Fortunately, that fork also adds management VRF (and default route within the management VRF) to most device configurations, making the overlap between the *vrnetlab* internal subnet and the *netlab* loopback pool irrelevant. However, all VMs in *vrnetlab* containers will have the same IP and MAC address on the management interface, potentially confusing any network management system you might use with your lab.
+The packaged container's architecture requires an internal network. Traditionally, the [*vrnetlab* fork](https://github.com/srl-labs/vrnetlab) supported by *containerlab* used the IPv4 prefix 10.0.0.0/24 on that network and assigned IPv4 address 10.0.0.15 to the management interface, clashing with the *netlab* loopback address pool.
 
-Finally, if you're still experiencing connectivity problems or initial configuration failures with _vrnetlab_-based containers after rebuilding them with the [latest vrnetlab version](https://github.com/srl-labs/vrnetlab), add the following parameters to the lab configuration file to change the _netlab_ loopback addressing pool:
+Fortunately, that fork also adds management VRF (and default route within the management VRF) to most device configurations, making the overlap between the *vrnetlab* internal subnet and the *netlab* loopback pool irrelevant. However, all VMs running within *vrnetlab* containers will have the same IP and MAC address on the management interface, potentially confusing any network management system you might use with your lab.
+
+Recently, *vrnetlab* implemented **[Transparent Management](https://containerlab.dev/manual/vrnetlab/#management-interface)**, which configures the IPv4 address configured on the container management interface on the network device VM. This feature is controlled by the `CLAB_MGMT_PASSTHROUGH` container environment variable and is enabled for all _netlab_ devices for which _vrnetlab_ already implemented it by July 2026. If you want to enable this feature on other devices, set the **devices._device_.clab.node.env.CLAB_MGMT_PASSTHROUGH** [topology default parameter](topo-defaults) or **clab.env.CLAB_MGMT_PASSTHROUGH** node variable to **True**.
+
+```{warning}
+* Setting this environment variable to True for a *‌vrnetlab* container that does not implement the Transparent Management might result in an unreachable management interface.
+* If a *vrnetlab* node is unreachable after **netlab up**, Transparent Management passthrough may be the cause. Either rebuild the Docker image with an up-to-date version of *vrnetlab*, or disable this passthrough for the affected node by setting `clab.env.CLAB_MGMT_PASSTHROUGH: "false"`.
+```
+
+The "management" VRF configured by most *vrnetlab* containers should eliminate the overlap between loopback and management IPv4 addresses. However, if you're still experiencing connectivity problems or initial configuration failures even after rebuilding the containers with the [latest vrnetlab version](https://github.com/srl-labs/vrnetlab), add the following parameters to the lab configuration file to change the _netlab_ loopback addressing pool:
 
 ```
 addressing:
@@ -265,17 +279,26 @@ The **netlab_check_retries** parameter is set higher in system defaults for virt
 
 ## Advanced Topics
 
-### Container Runtime Support
+### Podman Support
 
-Containerlab supports [multiple container runtimes](https://containerlab.dev/cmd/deploy/#runtime) besides the default **docker**. The runtime to use can be configured globally or per node, for example:
+Containerlab supports [**docker** and **podman** containers](https://containerlab.dev/cmd/deploy/#runtime). You can specify the **podman** runtime with the **providers.clab.runtime** [topology default](topo-defaults), for example:
 
 ```
 provider: clab
 defaults.providers.clab.runtime: podman
-nodes:
-  s1:
-    clab.runtime: ignite
 ```
+
+```{warning}
+* The _containerlab_ podman support is experimental. Don't expect miracles.
+* Because *containerlab* runs as **root**, the *podman* containers it creates are not visible to regular users. To use the **podman** runtime, you MUST run **netlab** as **root**.
+* We tested the basic *podman-with-containerlab* functionality on Ubuntu 26.04. We did not test advanced features like multi-provider labs.
+```
+
+To use `podman` runtime with `clab` provider, use the **netlab install podman** command on Ubuntu/Debian to install _podman_ and _containerlab_. On other Linux distributions, ensure that:
+
+* You've enabled the _podman_ API
+* The _podman_ management socket is available
+* The _podman_ Docker compatibility package (usually `podman-docker`) is installed (the **docker** command must be available).
 
 (lab-clab-binds)=
 ### Using File Binds
@@ -412,13 +435,15 @@ server.
 
 ```{eval-rst}
 .. toctree::
-   :caption: Installing Container Images
+   :caption: Building and Installing Container Images
    :maxdepth: 1
    :hidden:
 
+   arcos.md
    ceos.md
    bird.md
    linux.md
    netscaler.md
+   vpp.md
 ..
 ```

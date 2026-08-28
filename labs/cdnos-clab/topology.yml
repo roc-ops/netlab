@@ -1,0 +1,29 @@
+# cDNOS validation lab: two DNOS containers back to back, OSPF and iBGP in one AS.
+#
+#   d1 ge100-0/0/1 ──────── ge100-0/0/1 d2      (clab veths eno1 <-> eno1)
+#
+# One AS, so OSPF runs on the link (netlab does not run an IGP across an inter-AS link) and BGP
+# is iBGP over the loopbacks -- which also exercises "initial" having configured lo0.
+#
+# Run it in its own multilab instance so it cannot collide with the other labs on this box:
+#
+#   netlab up --plugin multilab -s defaults.multilab.id=137
+#
+# Adjacencies need 1-2 minutes after the commit; an empty neighbour table read straight after
+# "netlab up" is not a failure.
+provider: clab
+
+# Standing rule: every netlab topology we create opts in to the Nautobot sync.
+# It is opt-in per lab and silent when absent, which is exactly how it drifts.
+defaults.nautobot_sync: true
+module: [ ospf, bgp ]
+
+nodes:
+  d1:
+    device: dnos
+    bgp.as: 65000
+  d2:
+    device: dnos
+    bgp.as: 65000
+
+links: [ d1-d2 ]

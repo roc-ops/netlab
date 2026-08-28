@@ -1,0 +1,136 @@
+{# DNOS IS-IS.
+
+   INSTANCE NAME: netlab's own, from isis.instance (default "Gandalf"), so unlike OSPF this
+   template does not have to invent one. That matters on hardware: both lab boxes already run an
+   operator instance called CORE, and netlab creating "Gandalf" beside it collides with nothing.
+   OSPFv2 had to be given a name knob (see ospf/dnos.j2) precisely because netlab's instance was
+   called "ospf" and merged into anything of that name.
+
+   WHAT DNOS REQUIRES ACROSS IS-IS INSTANCES -- measured against a container carrying an
+   operator-shaped CORE instance, because guessing it from the OSPF rules gets it backwards:
+
+    * THE SYSTEM ID MUST BE THE SAME, not distinct:
+
+          ERROR: System ID must be the same for all networks in all ISIS instances.
+
+      The AREA may differ (49.0002... beside CORE's 49.0001... commits fine); only the system-id
+      half of the NET is shared. This is the one rule netlab cannot satisfy by itself on a device
+      it does not own, because the operator's system id is not in the netlab data model and
+      netlab plans its own from the node id. Tell netlab the truth in the topology instead -- the
+      same fix bgp/dnos.j2 documents for the loopback, and there is a worked example in
+      labs/dnos-hw-isis/:
+
+          nodes:
+            RNS72XC:
+              isis.net: 49.0001.1920.0000.5000.00     # the box's OWN system id
+
+      Read it off the box with "show config protocols isis instance <theirs>". Without it the
+      candidate is refused by "commit check", so nothing is applied and nothing is damaged -- but
+      the default render cannot come up on a box that already runs IS-IS, and no template change
+      can make it, because the value is only knowable from the box.
+
+      Pinning a netlab ATTRIBUTE here, where ospf/dnos.j2 uses a netlab_dnos_* variable for its
+      router-id, is deliberate rather than drift: isis.net is visible in the rendered config and
+      in the topology under review, while a group_vars override is invisible to "netlab initial
+      -o" (see the distance note below).
+
+    * ADMINISTRATIVE DISTANCES MUST DIFFER, and DNOS compares the EFFECTIVE values, not just the
+      configured ones -- two instances both sitting on the default 115 are refused:
+
+          ERROR: Administrative-distances of ISIS protocols Gandalf and CORE cannot be equal.
+
+      So a second instance needs one, and it is emitted for exactly the nodes that will be a
+      second instance: those netlab does not own. A lab node has no operator instance to collide
+      with and keeps the stock distance, so IS-IS route preference in a lab still matches every
+      other netlab device.
+
+      netlab_dnos_isis_distance overrides the 120 default. 120 is deliberately WORSE than the
+      stock 115, so that where netlab's instance and the operator's both learn a prefix the
+      operator's wins and netlab never quietly takes over a production path. If the operator is
+      themselves on 120 the commit check refuses it and names both instances, so the clash is
+      loud and the override is the answer -- but note that setting it in topology groups.*.vars
+      will NOT show up in "netlab initial -o", which merges DEVICE group_vars only. Preview it
+      from the candidate diff the deploy prints instead.
+
+    * A ROUTED INTERFACE MAY BE IN ONLY ONE INSTANCE; A LOOPBACK MAY BE IN SEVERAL:
+
+          ERROR: Interface 'ge100-0/0/1' can't be enabled on more than one IS-IS instance.
+
+      while lo0 in both CORE and Gandalf commits cleanly. THIS IS NOT AN IS-IS PECULIARITY -- a
+      second OSPF instance takes a loopback that another instance already has, too (verified with
+      a matching router-id and distinct distances, so nothing else masked it). The rule for both
+      protocols is the same: loopbacks are shareable, routed interfaces are not.
+
+      That matters when choosing PORTS on a box netlab does not own. interface_name maps netlab
+      link N onto ge10-0/0/N, and the 72XC's CORE instance already holds ge10-0/0/5 and
+      ge10-0/0/20 (plus bundle-5.10, ge100-0/0/64.10, ge100-0/0/70.20 and lo0). A one-link
+      topology lands on ge10-0/0/1 and is fine; a five-link topology reaches ge10-0/0/5 and is
+      refused. Give netlab ports the operator's IS-IS does not already carry.
+
+   IDENTITY: the system loopback is excluded unless netlab is the owner of record, exactly as in
+   ospf/dnos.j2. On a device in service the loopback is the operator's -- it anchors their
+   router-id and their prefix-SID -- so netlab does not advertise it out of an instance netlab
+   created, even though DNOS would let it.
+
+   TWO LEAVES ARE REJECTED ON A LOOPBACK, and netlab can be asked for both, so both guards below
+   are load-bearing rather than defensive:
+
+    * "passive". netlab marks loopbacks passive, and on a loopback the word does not exist:
+      "The command 'passive enabled' failed, Reason: Unknown word." On a real interface it does
+      exist but takes a value -- a bare "passive" there is an "Incomplete command", not an
+      unknown one.
+    * "level". modules/isis.yml declares attributes.loopback.type, so a topology may legitimately
+      say "nodes.d1.loopback.isis.type: level-1" -- which renders "level level-1" under lo0 and
+      fails the same way, taking the WHOLE load merge with it.
+
+   "metric" under the loopback's address-family is accepted, so it needs no such guard.
+
+   METRIC HANGS OFF THE ADDRESS FAMILY, not off the interface: "metric" directly under the
+   interface is rejected as an unknown word, and under "address-family <af>-unicast" it commits.
+   So a cost applies per address family, and is emitted once per family the interface runs. #}
+{% set _own  = netlab_manage_identity|default(True) %}
+{% set _lb   = loopback.ifname|default('') %}
+{% set _if   = [] %}
+{% for l in netlab_interfaces|default([])
+     if l.isis is defined and (_own or l.ifname != _lb) %}
+{%   set _ = _if.append(l) %}
+{% endfor %}
+protocols
+  isis
+    instance {{ isis.instance }}
+{#  IS-IS has an instance-level admin-state; OSPF and BGP have none. Without it the instance is
+    configured and does nothing. #}
+      admin-state enabled
+      iso-network {{ isis.net }}
+      level {{ isis.type|default('level-2') }}
+{% if not _own %}
+      administrative-distance {{ netlab_dnos_isis_distance|default(120) }}
+{% endif %}
+{% for l in _if %}
+{%   set _is_lb = l.type|default('') == 'loopback' %}
+      interface {{ l.ifname }}
+        admin-state enabled
+{%   if l.isis.network_type|default('') == 'point-to-point' %}
+        network-type point-to-point
+{%   endif %}
+{%   if l.isis.passive|default(False) and not _is_lb %}
+        passive enabled
+{%   endif %}
+{#   Per-interface circuit type, suppressed on a loopback where DNOS has no such leaf (see
+     above). Only emitted when the topology asked for one that differs from the instance level --
+     an interface with no level of its own inherits the instance's. #}
+{%   if l.isis.type is defined and l.isis.type != isis.type|default('level-2') and not _is_lb %}
+        level {{ l.isis.type }}
+{%   endif %}
+{%   for af in ["ipv4","ipv6"] if isis.af[af]|default(False) and l[af] is defined %}
+        address-family {{ af }}-unicast
+{%     if l.isis.metric is defined or l.isis.cost is defined %}
+          metric {{ l.isis.metric|default(l.isis.cost) }}
+{%     endif %}
+        !
+{%   endfor %}
+      !
+{% endfor %}
+    !
+  !
+!

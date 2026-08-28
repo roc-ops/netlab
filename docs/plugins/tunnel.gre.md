@@ -7,12 +7,28 @@ The **tunnel.gre** plugin implements point-to-point GRE tunnels over IPv4 and IP
 
 The plugin includes Jinja2 templates for the following platforms:
 
+```{features}
+- title: GRE over<br>IPv4
+  enabled: |-
+    'ipv4' in tunnel.gre
+- title: GRE over<br>IPv6
+  enabled: |-
+    'ipv6' in tunnel.gre
+- title: Transport<br>VRF
+  enabled: |-
+    'vrf' in tunnel.gre
+```
+
+
 | Operating system    | GRE over<br>IPv4 | GRE over<br>IPv6 | Transport<br>VRF |
 |--------------|:-:|:-:|:-:|
+| Arista EOS          | ✅ | ❌ | ✅ |
 | Cisco IOS/XE[^18v] |✅|✅|✅|
 | FRR                 |✅|✅|✅|
-| Juniper vJunos-switch |✅|✅|✅|
-| Juniper vSRX        |✅|✅|✅|
+| Juniper vJunos-switch[❗](caveats-junos) |✅|❌|✅|
+| Juniper vSRX[❗](caveats-junos) |✅|❌|✅|
+| Mikrotik RouterOS 7 |✅|✅|✅|
+| OpenBSD            |✅|❌|❌|
 | VyOS               |✅|✅|✅|
 
 [^18v]: Includes Cisco IOSv, Cisco IOSvL2, Cisco CSR 1000v, Cisco Catalyst 8000v, Cisco IOS-on-Linux (IOL), and IOL Layer-2 image.
@@ -34,12 +50,13 @@ The other link/interface parameters supported by this plugin include:
 
 The source interface/IP address for a tunnel is specified with the **tunnel.source** link/interface attribute. This attribute can have these components:
 
-* **ifindex** -- matches the source interface based on its **ifindex** (useful only when you [specify **ifindex** on interfaces](link-attributes-intf))
-* **name** -- matches link/interface **name** attribute
-* **role** -- matches link/interface **role** attribute
+* **linkid** -- matches the transport interface [link identifier](link-linkid)
 * **type** -- specifies source interface type (valid value: **loopback**)
+* **link.name** -- matches link/interface **name** attribute
+* **link.role** -- matches link/interface **role** attribute
+* **ifindex** -- matches the source interface based on its **ifindex** (useful only when you [specify **ifindex** on interfaces](link-attributes-intf))
 
-The source interface selection algorithm evaluates all interfaces in the VRF specified with the **tunnel.vrf** parameter or global interfaces when the tunnel link/interface has no **tunnel.vrf** parameter. The selected interface must match the optional **ifindex**, **name**, or **role** parameters and must have an IP address in the **tunnel.af** address family.
+The source interface selection algorithm evaluates all interfaces in the VRF specified with the **tunnel.vrf** parameter or global interfaces when the tunnel link/interface has no **tunnel.vrf** parameter. The selected interface must match the optional **tunnel.source** parameters and must have an IP address in the **tunnel.af** address family.
 
 The loopback interface(s) are skipped unless you set the **tunnel.type** attribute to **loopback**. The tunnel interfaces are always skipped[^TIS].
 

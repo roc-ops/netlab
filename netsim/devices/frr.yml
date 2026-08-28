@@ -1,9 +1,14 @@
 ---
 description: FRR container
+docname: FRRouting
+docparent: False                    # Do not use as a parent device in feature support tables
 interface_name: eth{ifindex}
 mgmt_if: eth0
 loopback_interface_name: lo{ifindex if ifindex else ""}
-tunnel_interface_name: "tun{ifindex}"
+tunnel_interface_name:
+  gre: "gre{ifindex + 1}"
+  wireguard: "wg{ifindex}"
+  default: "tun{ifindex}"
 lag_interface_name: "bond{lag.ifindex}"
 role: router
 routing:
@@ -16,10 +21,6 @@ group_vars:
   ansible_network_os: frr
   ansible_python_interpreter: auto_silent
   netlab_initial: always
-  netlab_linux_packages:
-    gnupg: gpg
-    curl: curl
-    iproute2: bridge
   netlab_frr_daemons:
     bfd: [ bfdd ]
     bgp: [ bgpd ]
@@ -42,6 +43,9 @@ clab:
   features:
     initial:
       config_mode: [ sh ]
+    services:
+      dns:
+        transport_vrf: False
   image: quay.io/frrouting/frr:10.6.1
   kmods:
     initial: [ 'vrf?' ]
@@ -50,6 +54,7 @@ clab:
     config_templates:
       daemons: /etc/frr/daemons
       hosts: /etc/hosts:shared
+      resolv: /etc/resolv.conf
 
 libvirt:
   image: debian/bookworm64
@@ -62,6 +67,10 @@ libvirt:
     ansible_ssh_pass: vagrant
     ansible_ssh_private_key_file: .vagrant/machines/{{ inventory_hostname }}/libvirt/private_key
     netlab_show_command: [ sudo, vtysh, -c, 'show $@' ]
+    netlab_linux_packages:
+      gnupg: gpg
+      curl: curl
+      iproute2: bridge
 
 external:
   image: none
@@ -77,7 +86,7 @@ features:
     generate_mac: [ svi ]
     collect: true
     reload: true
-  bfd: True
+  bfd.caveats: caveats-frr
   bgp:
     activate_af: true
     advertise: true
@@ -189,7 +198,7 @@ features:
     supported_protocols: [ stp ]  # Implementation uses a separate bridge per VLAN
     enable_per_port: False
   tunnel:
-    gre: [ vrf ]
+    gre: [ vrf, ipv4, ipv6 ]
     wireguard: [ vrf ]
   vlan:
     mixed_trunk: true

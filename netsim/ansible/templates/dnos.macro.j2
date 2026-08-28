@@ -1,0 +1,35 @@
+{# Rendering rules shared by more than one DNOS template.
+
+   These live in one file rather than being written twice because the two callers are one bug
+   apart: initial/dnos.j2 decides what address a loopback actually gets, and bgp/dnos.j2 has to
+   originate exactly that -- so a rule that drifts between them produces a lab whose BGP
+   advertises a prefix that was never configured, and says nothing about it. #}
+
+{#  DNOS accepts an IPv6 address on a loopback ONLY as a /128:
+      "Loopback interface IPv6 address on lo0 can be configured only with /128"
+    netlab plans its loopback pool as a /64, so the address is coerced on the way out. Callers
+    must apply this to EVERY loopback-type interface, not just the system loopback: an
+    additional loopback is a loopback too. #}
+{% macro loopback_ipv6(addr) -%}
+{{ addr|ipaddr('address') }}/128
+{%- endmacro %}
+
+{#  The BGP counterpart of the same rule. "network" is an EXACT-MATCH origination -- DNOS
+    advertises the prefix only while a route for exactly that prefix is in the table -- so
+    originating netlab's planned /64 for a loopback advertises nothing at all, silently: the
+    prefix sits in the local BGP table unadvertised and un-best, with no error anywhere.
+
+    Given one entry from bgp.advertise, returns the prefix to originate: the /128 that
+    initial/dnos.j2 configured if this prefix is a loopback's, and otherwise exactly what netlab
+    asked for. Keyed on interface TYPE, so it covers additional loopbacks as well. #}
+{% macro origination(pfx, af, ifs) -%}
+{% set _lb = [] -%}
+{% if af == 'ipv6' -%}
+{%   for l in ifs
+       if l.type|default('') == 'loopback' and l.ipv6 is defined and l.ipv6 is not sameas true
+          and l.ipv6|ipaddr('subnet') == pfx -%}
+{%     set _ = _lb.append(l.ipv6) -%}
+{%   endfor -%}
+{% endif -%}
+{{ loopback_ipv6(_lb[0]) if _lb else pfx }}
+{%- endmacro %}

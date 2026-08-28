@@ -1,6 +1,24 @@
 Release Notes
 =============
 
+**Release 26.08 (2026-08-10)**
+
+The highlights of release 26.08 include:
+
+* Support for ArcOS by [@roc-ops](https://github.com/roc-ops), VPP (FD.io) by [@jbemmel](https://github.com/jbemmel), and SONiC containers (also by [@roc-ops](https://github.com/roc-ops))
+* The [**routing** module](generic-routing) supports [IPv4/IPv6 access control lists](generic-routing-acl) (by [@DanPartelly](https://github.com/danpartelly))
+* The new [**services** module](module-services) configures [DNS clients and servers](services-dns-platform)
+* GRE tunnels on Arista EOS and GRE/WireGuard tunnels on Mikrotik RouterOS7 and OpenBSD (by [@snuffy22](https://github.com/snuffy22))
+* *clab* provider supports the **podman** container runtime ([details](lab-clab))
+
+We couldn't avoid a few changes with a non-zero chance of breaking your existing setup:
+
+* *netlab* always configures an IPv6 *containerlab* management subnet to support *vrnetlab* containers using Transparent Management feature.
+* Linux nodes (and devices based on them, like BIRD) do not accept IPv6 default route from the management network (most other devices use a management VRF)
+* We switched to [sudo-less *containerlab* operation](https://containerlab.dev/install/#sudo-less-operation).
+
+[More details](release-26.08), new [device features](release-26.08-device-features), and [breaking changes](release-26.08-breaking)
+
 **Release 26.07 (2026-07-12)**
 
 The highlights of release 26.07 include:
@@ -30,7 +48,7 @@ We also had to make a few breaking changes:
 
 **Release 26.05 (2026-05-16)**
 
-* Support for [global BGP routes with SRv6 next hops](module-srv6-services) on FRR and IOS XR
+* Support for global BGP routes with SRv6 next hops on FRR and IOS XR
 * Support for Juniper cSRX container
 * Streamline and speed up the FortiOS initial device configuration
 * Junos OSPF/IS-IS [route redistribution](routing_import), VRF [IS-IS instances](isis-platform), and OSPF [interface parameters](ospf-interface-optional-support)
@@ -169,6 +187,7 @@ For older releases, check the [release notes archive](release-archive.md).
    :caption: Individual release notes
    :maxdepth: 1
 
+   release/26.08.md
    release/26.07.md
    release/26.06.md
    release/26.05.md

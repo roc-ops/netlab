@@ -12,6 +12,7 @@ The following table describes per-platform support of individual STP features:
 | Operating system   | STP | MSTP | RSTP | Per-VLAN<br>RSTP | Enable<br>per port |
 | ------------------ |:---:|:---:|:---:|:---:|:---:|
 | Arista EOS[^EOS]   | ✅  | ✅  | ✅  | ✅ |  ✅ |
+| Arrcus ArcOS[^ARCOS] | ❌  |  ❌  |  ❌  | ✅ | ❌   |
 | Cisco IOL L2[^IOLL2]   | ✅  | ✅  | ✅  | ✅ |  ✅ |
 | Cisco IOSv L2[^IOLL2]   | ✅  | ✅  | ✅  | ✅ |  ✅ |
 | Aruba AOS-CX[^AOSCX] | ❗  | ✅  | ❌  | ✅ |  ✅ |
@@ -22,6 +23,7 @@ The following table describes per-platform support of individual STP features:
 
 
 [^EOS]: MSTP is enabled by default
+[^ARCOS]: Rapid PVST is the only flavor and is enabled by default; the only off switch is global -- there is no per-port and no per-VLAN disable
 [^AOSCX]: MSTP is enabled by default; STP is stated as not supported, but it is configured as MSTP (see tip below).
 [^CL]: STP is enabled by default
 [^OS10]: PVRST is enabled by default, STP does not work on virtual networks (which are used for VXLAN)
@@ -32,17 +34,20 @@ The following table describes per-platform support of individual STP features:
 MSTP/RSTP ports fall back to regular STP upon receiving a plain STP BPDU.
 ```
 
+(module-stp-global-params)=
 ## Global Parameters
 
 * **stp.protocol** (one of `stp`, `mstp`, `rstp` or `pvrst`) -- Global STP flavor to run on supporting nodes, default `stp`
 * **stp.stub_port_type** (one of `normal`, `edge`, `network`, `auto` or `none`) -- Port type to configure on ports with only hosts connected, default `none` (not set). When set, this overrides any more specific **stp.port_type** value set at node or vlan level
 
+(module-stp-params)=
 ## Global, Node, Link, Interface, and VLAN Parameters
 
 * **stp.enable** (bool) -- Enable STP. Optional, default: **True**. Set this to **False** explicitly to disable STP on platforms that enable it by default. We're not responsible for the loops you might get as a result.
 
 ```{tip}
-You can set the **‌stp.enable** parameter in the **‌vlans** dictionary to enable per-VLAN STP.
+* You can set the **‌stp.enable** parameter in the **‌vlans** dictionary to enable per-VLAN STP.
+* You cannot enable STP on a layer-3 interface.
 ```
 
 ## Node Parameters (global or per VLAN)

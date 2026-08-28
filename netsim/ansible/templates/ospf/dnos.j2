@@ -1,0 +1,191 @@
+{# DNOS OSPF.
+
+   OSPFv2 AND OSPFv3 LIVE UNDER DIFFERENT TOP-LEVEL NODES, and this is the thing to get right.
+   OSPFv2 is "protocols ospf" holding one or more named INSTANCES. OSPFv3 is "protocols ospfv3",
+   a singleton: there is no "protocols ospfv3 instance <x>" path anywhere in the CLI model
+   ("cmd search ospfv3 | no-more" lists every path it has), and no second OSPFv3 process.
+
+   Rendering OSPFv3 as "protocols ospf / instance ospfv3" reads plausibly and the CLI ACCEPTS
+   it -- but it does not configure OSPFv3. It configures a second OSPFv2 instance that happens
+   to be named "ospfv3", holding interfaces that carry no IPv4 addresses. Nothing says so
+   directly; what gives it away is DNOS's uniqueness check on administrative distances, which
+   only ever compares instances of the SAME protocol:
+
+       ERROR: OSPF 'administrative-distance-external' in instance 'ospf' is the same as
+              'administrative-distance-external' in instance 'ospfv3'.
+
+   A dual-stack node cannot commit at all, and a single-stack IPv6 node commits an OSPFv2
+   instance that never forms an adjacency. Found by deploying to cDNOS; it applies equally to
+   the hardware.
+
+   An address family is emitted only when it actually has interfaces. Without that check an
+   IPv4-only link leaves a stranded, empty OSPFv3 process carrying a router-id and nothing else
+   -- the device accepts it and keeps it, so nothing complains, but it is wrong. This is easy to
+   hit on physical hardware: once the system loopback is excluded (it belongs to the device, not
+   to netlab), a single-family link can be all that remains.
+
+   The system loopback is excluded unless netlab is the owner of record. On a device in service
+   the loopback anchors the BGP router-id and L2VPN route-distinguishers, so it must not be
+   pulled into an OSPF area that netlab created. #}
+{% set _own  = netlab_manage_identity|default(True) %}
+{% set _lb   = loopback.ifname|default('') %}
+{% set _dflt = ospf.area|default("0.0.0.0") %}
+{#  The area/interface body is identical for the two address families and only its indentation
+    differs (OSPFv2 sits one level deeper, under "instance"), so it is written once. #}
+{% macro area_block(_if) %}
+{% set _areas = [] %}
+{% for l in _if if l.ospf.area|default(_dflt) not in _areas %}
+{%   set _ = _areas.append(l.ospf.area|default(_dflt)) %}
+{% endfor %}
+{% for area in _areas %}
+area {{ area }}
+{%   for l in _if if l.ospf.area|default(_dflt) == area %}
+  interface {{ l.ifname }}
+{#   "passive" takes a value on DNOS ("passive enabled"); a bare "passive" is rejected with
+     "Unknown word: 'passive'". So is the whole keyword on a LOOPBACK, in either address
+     family -- a loopback advertises without forming adjacencies whatever we say, so DNOS
+     does not offer the leaf there. netlab marks stub and loopback interfaces passive, which
+     is how a config that is right everywhere else fails to load. #}
+{%     if l.ospf.passive|default(False) and l.type|default('') != 'loopback' %}
+    passive enabled
+{%     endif %}
+{%     if l.ospf.network_type|default("") == "point-to-point" %}
+    network-type point-to-point
+{%     endif %}
+  !
+{%   endfor %}
+!
+{% endfor %}
+{% endmacro %}
+{% set _if4 = [] %}
+{% for l in netlab_interfaces|default([])
+     if l.ospf is defined and l.ipv4 is defined and (_own or l.ifname != _lb) %}
+{%   set _ = _if4.append(l) %}
+{% endfor %}
+{% set _if6 = [] %}
+{% for l in netlab_interfaces|default([])
+     if l.ospf is defined and l.ipv6 is defined and (_own or l.ifname != _lb) %}
+{%   set _ = _if6.append(l) %}
+{% endfor %}
+protocols
+{% if _if4 and ospf.af.ipv4 is defined %}
+  ospf
+{#  NETLAB'S OSPFv2 INSTANCE IS CALLED "ospf", AND WHAT THAT MEANS DEPENDS ON THE BOX.
+
+    OSPFv2 on DNOS is a set of NAMED instances and "load merge" merges by name, so on a device
+    netlab does not own there are two outcomes and netlab cannot tell them apart in advance:
+
+     * the box runs OSPF under some other name -- "IPUNNUM" on the 72XC, and this is the normal
+       case -- so netlab CREATES its own instance alongside the operator's. Everything under
+       "COEXISTENCE" below then applies, because DNOS enforces rules ACROSS instances.
+     * the box already has an instance called "ospf". Then netlab does not create anything:
+       its areas and interfaces land INSIDE the operator's OSPF process. The consequence worth
+       understanding before running this against a box in service is that a netlab-managed link
+       then belongs to the operator's OSPF domain -- it forms adjacencies there and floods LSAs
+       into it -- which is what you want when netlab is extending a fabric, and is not what you
+       want if you expected an isolated lab process. In that case the three
+       administrative-distance values below also land on the operator's instance and replace
+       theirs; nothing else netlab renders touches an attribute the operator owns.
+
+    Both were exercised on the physical 72XC (DNOS 26.1.0) with candidate-only dry runs, and the
+    box was byte-identical afterwards each time.
+
+    ESCAPE HATCH -- netlab_dnos_ospf_instance renames the instance, for anyone who wants a
+    separate netlab-owned process on a box whose production instance IS called "ospf". Two
+    things to know before reaching for it:
+
+     * IT ONLY COVERS IPv4. OSPFv3 has no instance layer at all (see below), so on a dual-stack
+       node the v4 interfaces move into the renamed instance while the v6 interfaces still merge
+       into the operator's "protocols ospfv3" and flood there. The hatch does not isolate the
+       node, only half of it.
+     * THE OFFLINE PREVIEW DOES NOT SHOW IT. This variable, netlab_dnos_ospf_router_id and the
+       three distance overrides are read from Ansible group_vars, and "netlab initial -o" (and
+       every other offline render) merges DEVICE group_vars only -- never topology groups.*.vars.
+       So the preview shows the DEFAULT configuration while the real deploy pushes the
+       overridden one. On a production router, check the candidate diff the deploy itself
+       prints, not the offline render.
+
+    Set it the way netlab_dnos_commit is set (see tasks/deploy-config/dnos.yml):
+
+        groups:
+          all:
+            vars:
+              netlab_dnos_ospf_instance: netlab
+
+    Renaming also brings the cross-instance rules into play on a box where they did not apply
+    before -- router-id agreement, distinct distances, and one instance per ROUTED interface:
+
+        ERROR: Unable to set interface 'ge100-0/0/1' under OSPF instance netlab area
+               '0.0.0.0'. Interface attached to OSPF instance ospf area '0.0.0.0'.
+
+    -- which is the right outcome anyway: it refuses to move a live routed interface out of the
+    production IGP. A LOOPBACK is exempt: a second instance may take one that another instance
+    already has (verified with a matching router-id and distinct distances, so nothing else
+    masked it). IS-IS behaves identically -- see isis/dnos.j2, where it was measured -- so this
+    is a DNOS rule about interface kinds, not something specific to OSPF. #}
+{%   set _inst = netlab_dnos_ospf_instance|default('ospf') %}
+    instance {{ _inst }}
+{%   if _own %}
+      router-id {{ ospf.router_id }}
+{%   else %}
+{#   COEXISTENCE WITH AN EXISTING OSPFv2 INSTANCE.
+
+     Only reached on a device netlab does not own, which is normally running OSPF under a name
+     of its own -- so netlab's instance is a SECOND instance, and DNOS constrains what a second
+     instance may look like.
+
+     ADMINISTRATIVE DISTANCES ARE WHAT MAKE THAT PATH WORK AT ALL, which is why they are
+     emitted unconditionally rather than on request. DNOS requires the distances to be distinct
+     ACROSS instances, and compares per-value, not per-kind -- our inter-area is checked against
+     their external too -- so two instances sitting on the defaults cannot both commit. Proven
+     on the 72XC, whose operator instance "IPUNNUM" carries no explicit distances: without this
+     block, "commit check" refuses the candidate outright --
+
+         ERROR: OSPF 'administrative-distance-external' in instance 'ospf' is the same as
+                'administrative-distance-external' in instance 'IPUNNUM'.
+
+     -- and with 200/201/202 it passes. Making them opt-in reads like the safer choice and is
+     not: it leaves the default broken on any box that already runs OSPF, which is the normal
+     case for hardware. The three overrides exist for the box where 200-202 are themselves
+     taken. A clash is never silent: DNOS names the conflicting instance and attribute at
+     "commit check", before anything is applied, and the external provider is a dry run by
+     default.
+
+     ROUTER-ID. Instances must agree on the CONFIGURED router-id, and DNOS compares it in BOTH
+     directions: against an instance that has none, an explicit router-id is rejected whatever
+     value we use; against an instance that HAS one, the omission is rejected --
+
+         ERROR: OSPF router-id 'None' in instance 'netlab' is different from
+                router-id '10.8.0.1' in instance 'ospf'
+
+     Nothing is emitted by default because the 72XC's instance has none, and because the value
+     netlab planned for its own loopback is almost certainly not the one a box in service uses.
+     netlab_dnos_ospf_router_id supplies the value the error message names; read it with
+     "show config protocols ospf instance <theirs>".
+
+     None of this applies to OSPFv3 below: there is exactly ONE OSPFv3 process per device and
+     no name to distinguish it by, so netlab cannot have its own and never sets a distance
+     there -- doing so would be re-writing the OPERATOR'S value, not ours. #}
+{%     if netlab_dnos_ospf_router_id is defined %}
+      router-id {{ netlab_dnos_ospf_router_id }}
+{%     endif %}
+      administrative-distance external {{ netlab_dnos_ospf_distance_external|default(200) }}
+      administrative-distance inter-area {{ netlab_dnos_ospf_distance_inter_area|default(201) }}
+      administrative-distance intra-area {{ netlab_dnos_ospf_distance_intra_area|default(202) }}
+{%   endif %}
+{{ area_block(_if4)|trim|indent(6,True) }}
+    !
+  !
+{% endif %}
+{% if _if6 and ospf.af.ipv6 is defined %}
+{#  There is exactly one OSPFv3 process per device. On a box netlab does not own, "load merge"
+    therefore MERGES netlab's areas and interfaces into the operator's OSPFv3 rather than
+    standing up anything of its own -- which is why the router-id is withheld: it is theirs. #}
+  ospfv3
+{%   if _own %}
+    router-id {{ ospf.router_id }}
+{%   endif %}
+{{ area_block(_if6)|trim|indent(4,True) }}
+  !
+{% endif %}
+!

@@ -1,5 +1,5 @@
 {#
-  ArcOS Segment Routing (SR-MPLS via IS-IS) -- issue #39. ALL FOUR pieces are required for the
+  ArcOS Segment Routing (SR-MPLS via IS-IS). ALL FOUR pieces are required for the
   SID to actually appear on the wire:
    1. reserved-label-block as ONE LINE (mode-descent -> "incomplete path") and it MUST carry
       protocol-name <isis-tag>: without it the SRGB never binds to ISIS and the prefix-SID
@@ -17,9 +17,9 @@ network-instance default mpls global reserved-label-block ISIS-SRGB lower-bound 
 network-instance default protocol ISIS i1 global traffic-engineering ipv4-router-id {{ loopback.ipv4|ipaddr('address') }}
 network-instance default protocol ISIS i1 global segment-routing enabled true
 !
-{% if sr.node_sid.ipv4 is defined %}
+{%   if sr.node_sid.ipv4 is defined %}
 network-instance default protocol ISIS i1 interface loopback0 af IPV4 UNICAST prefix-sid SPF sid-type INDEX
 network-instance default protocol ISIS i1 interface loopback0 af IPV4 UNICAST prefix-sid SPF value {{ sr.node_sid.ipv4 }}
 !
-{% endif %}
+{%   endif %}
 {% endif %}

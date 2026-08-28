@@ -5,10 +5,7 @@ prefix: "{{ defaults.providers.clab.lab_prefix|default( "" ) }}"
 mgmt:
   network: {{ addressing.mgmt._network|default('') or 'netlab_mgmt' }}
   ipv4-subnet: {{ addressing.mgmt.ipv4|default('172.20.20.0/24') }}
-  # Note: 'start' not validated
-{% if defaults.addressing.mgmt.ipv6 is defined %}
-  ipv6-subnet: {{ defaults.addressing.mgmt.ipv6 }}
-{% endif %}
+  ipv6-subnet: {{ defaults.addressing.mgmt.ipv6|default(defaults.providers.clab.mgmt_default_ipv6) }}
 {% if addressing.mgmt._bridge|default('') %}
   bridge: {{ addressing.mgmt._bridge }}
 {% endif %}
@@ -39,7 +36,6 @@ topology:
 {%     endif %}
 {%   endfor %}
       image: {{ clab.image|default(n.box) }}
-      runtime: {{ clab.runtime|default(defaults.providers.clab.runtime) }}
 {%   if groups is defined %}
       group: {% for g in groups if n.name in groups[g].members %}{{'' if loop.first else ','}}{{g}}{% endfor +%}
 {%   endif %}

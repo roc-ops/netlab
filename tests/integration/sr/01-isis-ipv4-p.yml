@@ -23,9 +23,18 @@ groups:
     members: [ dut, p2 ]
     module: [ isis, sr ]
   x_switches:
-    members: [ pe1, pe2, p2 ]
+    members: [ pe1, p2 ]
     device: frr
     provider: clab
+  x_probes:
+    members: [ pe2 ]
+    device: eos
+    provider: clab
+
+nodes:
+  dut:
+    id: 1
+    sr.srgb.start: 407230    # check IS-IS SRGB setup (see #3652)
 
 links:
 - h1:
@@ -53,6 +62,14 @@ validate:
     nodes: [ pe2 ]
     plugin: bgp_neighbor(node.bgp.neighbors,'pe1')
     stop_on_error: true
+  srgb:
+    description: Check DUT SRGB settings
+    nodes: [ pe2 ]
+    level: warning
+    fail: The DUT SRGB does not start at 407230
+    exec.eos: show isis segment-routing global-blocks
+    valid: >-
+      "407230" in stdout
   ping:
     description: Ping-based end-to-end reachability test
     wait_msg: We might have to wait a bit longer

@@ -1,5 +1,6 @@
 ---
 description: Generic Cisco IOS device (meta device, used only as parent)
+docname: Cisco IOS
 _meta_device: True
 template: True
 attributes:
@@ -137,8 +138,11 @@ features:
       vrf: True
       inter_vrf: True
       discard: True
+    acl: True
+  services:
+    dns: True
   tunnel:
-    gre: [ vrf ]
+    gre: [ vrf, ipv4, ipv6 ]
   vlan:
     model: router
     svi_interface_name: BVI{bvi}

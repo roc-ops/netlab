@@ -1,0 +1,66 @@
+{# DNOS initial configuration, rendered as a DNOS CLI config file and applied with "load merge".
+
+   SAFETY: this device is always PHYSICAL hardware that netlab did not create and does not own
+   outright. A box in service already has a hostname and a loopback, and on a production router
+   the loopback is load-bearing -- typically the BGP router-id and the route-distinguisher
+   endpoint for L2VPN services. Rendering them unconditionally makes "load merge" REPLACE them.
+
+   So neither is emitted unless netlab is the owner of record, signalled by
+   netlab_manage_identity. The external provider defaults that to False for every node it
+   augments, so this is safe by default for any physical platform, not just this one.
+   Data-plane interfaces are safe to render
+   without a flag: the netlab "interfaces" list only ever holds links from the topology, i.e.
+   ports that were explicitly given to netlab. #}
+{% import "dnos.macro.j2" as dn with context %}
+{#  NOTE THE DEFAULT: False here, True in ospf/isis/bgp. The halves disagree, and only the
+    external provider setting netlab_manage_identity explicitly on every node it augments keeps
+    them from ever being read. If that ever stops happening, this file withholds the hostname and
+    loopback while the IGP templates still believe netlab owns the node -- identity withheld,
+    ownership assumed. Left as it is because changing either half silently changes what gets
+    pushed to hardware; recorded so the disagreement is a decision rather than a surprise. #}
+{% if netlab_manage_identity|default(False) %}
+system
+  name {{ inventory_hostname }}
+!
+{% endif %}
+interfaces
+{% if netlab_manage_identity|default(False) and loopback is defined %}
+  {{ loopback.ifname }}
+    admin-state enabled
+{%   if loopback.ipv4 is defined %}
+    ipv4-address {{ loopback.ipv4 }}
+{%   endif %}
+{%   if loopback.ipv6 is defined %}
+{#   /128 coercion -- the rule and the reason are in templates/dnos.macro.j2, shared with
+     bgp/dnos.j2, which has to originate exactly what is configured here. #}
+    ipv6-address {{ dn.loopback_ipv6(loopback.ipv6) }}
+{%   endif %}
+  !
+{% endif %}
+{% for l in interfaces %}
+  {{ l.ifname }}
+    admin-state enabled
+{%   if l.name is defined %}
+    description "{{ l.name }}"
+{%   endif %}
+{%   if l.mtu is defined and l.type|default('') != 'loopback' %}
+{#   DNOS "mtu" is the L2 MTU and derives IPv4/IPv6/MPLS MTU as L2 minus the 14-byte Ethernet
+     header, while netlab l.mtu is the layer-3 MTU. Passing it through raw leaves the device
+     14 bytes short, which shows up as an OSPF adjacency stuck in ExStart against a neighbour
+     that got the L3 value right. (ArcOS has the same class of adjustment, at +26.)
+     A loopback has no Ethernet header and takes no MTU leaf. #}
+    mtu {{ l.mtu + 14 }}
+{%   endif %}
+{%   for af in ["ipv4","ipv6"] if l[af] is defined and l[af] is not sameas true %}
+{%     if af == 'ipv6' and l.type|default('') == 'loopback' %}
+{#     Same /128 coercion, keyed on interface TYPE rather than on position in this file: an
+       ADDITIONAL loopback goes through this loop rather than the system-loopback block above,
+       so a rule that lives only up there silently misses every loopback except the first. #}
+    ipv6-address {{ dn.loopback_ipv6(l[af]) }}
+{%     else %}
+    {{ af }}-address {{ l[af] }}
+{%     endif %}
+{%   endfor %}
+  !
+{% endfor %}
+!

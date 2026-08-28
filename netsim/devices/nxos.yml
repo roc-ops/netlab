@@ -1,5 +1,6 @@
 ---
 description: Cisco Nexus 9300v
+docname: Cisco Nexus OS
 support:
   level: best-effort
 interface_name: Ethernet1/{ifindex}
@@ -13,6 +14,8 @@ clab:
   image: vrnetlab/vr-n9kv:9.3.8
   node:
     kind: cisco_n9kv
+    env:
+      CLAB_MGMT_PASSTHROUGH: "true"
   interface.name: eth{ifindex}
   build: https://containerlab.dev/manual/kinds/vr-n9kv/
 group_vars:

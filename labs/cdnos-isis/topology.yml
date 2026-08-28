@@ -1,0 +1,29 @@
+# cDNOS IS-IS validation lab: two DNOS containers back to back, IS-IS and iBGP in one AS.
+#
+#   d1 ge100-0/0/1 ──────── ge100-0/0/1 d2      (clab veths eno1 <-> eno1)
+#
+# iBGP peers over the loopbacks, so the BGP sessions can only establish if IS-IS has actually
+# installed the peer loopback route -- the session state doubles as proof that IS-IS is
+# forwarding-complete, not merely adjacent.
+#
+#   netlab up --plugin multilab -s defaults.multilab.id=138
+#
+# IS-IS adjacencies need 1-2 minutes, and BGP a further bestpath delay on top (see
+# netsim/devices/dnos.yml); an empty neighbour table read straight after "netlab up" is not a
+# failure.
+provider: clab
+
+# Standing rule: every netlab topology we create opts in to the Nautobot sync.
+# It is opt-in per lab and silent when absent, which is exactly how it drifts.
+defaults.nautobot_sync: true
+module: [ isis, bgp ]
+
+nodes:
+  d1:
+    device: dnos
+    bgp.as: 65000
+  d2:
+    device: dnos
+    bgp.as: 65000
+
+links: [ d1-d2 ]

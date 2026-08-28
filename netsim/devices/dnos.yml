@@ -1,0 +1,180 @@
+---
+# DriveNets Network Cloud (DNOS) device definition -- physical hardware (external provider)
+# AND the cDNOS container (clab provider).
+#
+# DNOS is a containerised NOS. It ships in two shapes we can drive:
+#
+#  * PHYSICAL: a Network Cloud cluster on white-box hardware (here: a single-NCP Edgecore
+#    S9600-72XC). netlab never creates or destroys such a node -- the "external" provider
+#    renders configuration and pushes it to a box that is already running.
+#  * cDNOS CONTAINER (clab): the DNOS control plane only -- no forwarding ASIC and no software
+#    datapath. Same CLI, same routing stack; it identifies as system type SA-VR. Control-plane
+#    protocols (OSPF/BGP/IS-IS) form real adjacencies over the clab veths, but anything that
+#    needs the data plane (forwarded traffic, ACL enforcement, interface counters) does not.
+#
+#    VRF FORWARDING IS HARDWARE-ONLY, and the container says so misleadingly. Every cDNOS node
+#    prints this at boot:
+#
+#        Warning: Your Kernel version 7.0.0-30-generic is not supported. Some functionalities
+#        will not work properly (e.g. VRFs)
+#
+#    It reads as "VRFs are broken on DNOS". They are not: on the physical S9700-53DX a fresh
+#    VRF's real-next-hop static route IS programmed to the NPU (confirmed by its SeqNum). What
+#    the banner means is that VRF forwarding cannot be VALIDATED in this container -- so any
+#    future vrf support is claimable for the device, with its data-plane validation marked
+#    hardware-only.
+#
+# cDNOS HOST PREREQUISITE -- the cgroup v1 "net_cls" hierarchy must EXIST system-wide:
+#
+#     sudo mount -t cgroup -o net_cls net_cls /sys/fs/cgroup/net_cls
+#
+# The cDNOS entrypoint mounts net_cls itself when it is missing and runs under "bash -e", so a
+# failed mount kills the container with exit 32 before anything starts -- which looks like a
+# broken image and is not. Creating a NEW v1 hierarchy from a container's private cgroup
+# namespace returns EPERM; attaching to one that already exists is allowed, which is why the
+# host has to do it once. (The vendor guide says to boot with cgroup v1 via GRUB. That is
+# unnecessary, and impossible on kernels built without CONFIG_MEMCG_V1.)
+#
+# ...and FREE LOOP DEVICES, two per node: cDNOS builds and mounts two loopback-backed images at
+# startup, /config_vol/config.fs and /packet_capture_vol/pcap.img. A privileged container's /dev
+# is a tmpfs POPULATED FROM THE HOST AT CREATION TIME, not the host devtmpfs, so a loop device
+# the kernel hands out later has no node inside the container and the mount fails -- the host
+# must already have enough /dev/loopN NODES, free, when the container is created. Ubuntu ships
+# eight, which four cDNOS nodes exhaust, and the failure is the same exit 32 as above with a
+# different cause ("mount: /config: failed to setup loop device"). Seed as many as the box will
+# ever want; the nodes persist once created, and an unattached loop device costs nothing:
+#
+#     truncate -s 1M /tmp/seed.img
+#     for i in $(seq 1 24); do sudo losetup -f --show /tmp/seed.img >/dev/null; done
+#     for d in $(losetup -j /tmp/seed.img -O NAME -n); do sudo losetup -d $d; done
+#     rm /tmp/seed.img
+#
+# VALIDATING BGP: GIVE IT A COUPLE OF MINUTES. DNOS holds path selection down for a moment after
+# a commit ("Bestpath delay is on, remaining N seconds" in "show bgp summary"), so for the first
+# minute or two after the BGP configuration lands, "show bgp ipv4 unicast" reports only the
+# node's OWN originated prefix -- "Displayed 1 out of 1 total prefixes" -- and the neighbour's
+# looks lost. It is not: the sessions are established and the table fills in on its own. Anything
+# that checks BGP immediately after "netlab up" sees the half-empty table first. The same lab
+# also has IGP routes working by then, so a ping can succeed while the BGP table still looks
+# wrong, which makes it easy to misread as a BGP failure rather than a timing artefact.
+# (OSPF adjacencies take a similar 1-2 minutes to reach Full.)
+#
+# CONFIG DEPLOYMENT
+#
+# DNOS has a proper candidate datastore, so deployment is transactional:
+#   1. netlab renders the module config into a DNOS CLI config file
+#   2. the file is copied to /config/ on the active NCC (scp; there is no sftp subsystem)
+#   3. "configure" / "load merge <file>" / "commit"
+# "show config compare" gives a real diff of the candidate, and "commit check" validates it
+# WITHOUT applying, so a dry run is possible before anything touches the running config.
+# "rollback 0" discards the candidate. NETCONF (:830) is also available and advertises
+# candidate/validate/confirmed-commit/rollback-on-error if an XML path is ever preferred.
+#
+# ONE transport serves both providers: a cDNOS container answers ssh and scp on port 22 of its
+# management address exactly as the hardware does, so only the target address changes, and
+# ansible_host already carries it. (NETCONF :830 and gNMI :50051 bind inside the container's
+# oob_ns and are NOT reachable from the host -- another reason the SSH path is the one to have.)
+#
+# The SSH exec channel does NOT work: the DNOS CLI rejects commands passed as ssh arguments and
+# takes ~10s to load, so commands must be fed on stdin after a delay. Several commands
+# ("request file delete", and "commit" on a concurrent-commit conflict) prompt interactively --
+# any transport must answer prompts or it will silently do nothing.
+#
+# INTERFACE NAMING: DNOS encodes port speed in the interface name, and the two platforms differ
+# -- the 72XC has 10G ports (ge10-0/0/N), cDNOS presents 100G ports (ge100-0/0/N). netlab reads
+# interface_name per PROVIDER (augment/devices.py get_device_attribute returns a
+# provider-specific non-dict value directly), so the clab section below carries its own name
+# pattern instead of the device having to pick one. That closes roc-ops/RocContLab#69 for this
+# device; a second HARDWARE speed range would still need its own device entry.
+description: DriveNets Network Cloud (DNOS)
+interface_name: ge10-0/0/{ifindex}
+ifindex_offset: 1
+mgmt_if: mgmt0
+loopback_interface_name: "lo{ifindex}"
+lag_interface_name: "bundle-{lag.ifindex}"
+role: router
+support:
+  level: best-effort
+external:
+  image: none
+clab:
+  # cDNOS ports are 100G, unlike the 10G 72XC (see INTERFACE NAMING above).
+  interface_name: ge100-0/0/{ifindex}
+  image: cdnos:26.2.0.9
+  build: https://github.com/roc-ops/RocContLab/blob/main/docs/cdnos.md
+  node:
+    # There is no containerlab kind for cDNOS, so it runs as "linux": clab starts the container
+    # and wires the veths, and nothing else. Everything netlab would normally do to a Linux
+    # container (address the interfaces from the shell, install packages) is wrong here -- the
+    # DNOS CLI owns the configuration, and it arrives through the deploy task like it does on
+    # hardware. Keeping ansible_connection at "local" (device group_vars) is what stops the
+    # Linux logic from being applied.
+    kind: linux
+    binds:
+      # cDNOS loads kernel modules from the host tree.
+      '/lib/modules': '/lib/modules'
+    env:
+      # "linux" kind containers are not privileged by default; cDNOS needs to be, to mount
+      # net_cls and to move its own management interface between network namespaces.
+      CLAB_PRIVILEGED: "true"
+      # CDNOS_NAME and CDNOS_UUID are per node and are set in devices/dnos.py.
+    # NOT bound: the per-instance /core directory the vendor guide asks for (logs and core
+    # dumps). Tested without it -- both nodes boot, configure, and form OSPF/OSPFv3/BGP
+    # adjacencies -- so netlab does not create a host directory per node for it. A lab chasing
+    # a cDNOS crash can add one back with clab.binds on the node.
+  interface:
+    # Container-side veth names. The cDNOS entrypoint maps enoN -> ge100-0/0/N, so the clab
+    # interface name and the DNOS interface name have to be kept in step: ifindex_offset 1
+    # gives eno1 <-> ge100-0/0/1 for the first link.
+    name: eno{ifindex}
+  group_vars:
+    # netlab created this node, so it owns its identity: hostname and loopback ARE rendered.
+    # (initial/dnos.j2 withholds them unless told otherwise, because the external provider sets
+    # netlab_manage_identity False on hardware that was already in service.)
+    netlab_manage_identity: True
+    # ...and for the same reason the dry-run default does not apply: the deploy task defaults to
+    # "commit check only" so that "netlab initial" cannot rewrite a production router, but a
+    # container netlab just started has nothing to protect and must actually be configured.
+    netlab_dnos_commit: True
+    # dnroot/dnroot is baked into the cDNOS image. Hardware credentials stay in a password FILE
+    # (netlab_dnos_password_file), which a pure-container lab has no reason to own.
+    netlab_dnos_password: dnroot
+    netlab_ready: [ ansible ]     # tasks/readiness-check/dnos-clab.yml
+    # The readiness probe honours both, and a cDNOS node needs longer than the netlab defaults:
+    # a cold container first accepts a commit around 30s in, and a host running several at once
+    # is slower still. 30 x 10s gives it five minutes before the lab is called broken.
+    netlab_check_retries: 30
+    netlab_check_delay: 10
+graphite.icon: router
+group_vars:
+  ansible_connection: local
+  ansible_network_os: dnos
+features:
+  initial:
+    ipv4: True
+    ipv6: True
+    mtu: True
+  ospf:
+    ipv4: True
+    ipv6: True
+    unnumbered: False
+    default: False
+    priority: False
+    password: False
+    timers: False
+  isis:
+    # Only what was verified by commit check against a real DNOS IS-IS instance.
+    circuit_type: True          # per-interface "level level-N" commits
+    import: False               # no redistribution into IS-IS in this template
+    unnumbered:                 # neither implemented nor tested here
+      ipv4: False
+      ipv6: False
+      network: False
+  bgp:
+    ipv4: True
+    ipv6: True
+    local_as: False
+    vrf_local_as: False
+    local_as_ibgp: False
+    activate_af: True
+    rfc8950: False

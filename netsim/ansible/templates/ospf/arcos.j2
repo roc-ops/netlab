@@ -1,95 +1,115 @@
 {#
-  ArcOS OSPFv2 + OSPFv3 (issue #39). Ported from the out-of-tree netlab/arcos/ device
-  (live-verified: full adjacency both directions over gNMI). Same area/area-interface shape
-  for both AFs modulo two differences: the protocol keyword (OSPF vs OSPF3), and the area ID is
-  written as a plain integer ("area 0") in OSPFv3, not dotted-decimal ("area 0.0.0.0") like
-  OSPFv2 -- confirmed in the ArcOS 8.5 CLI docs.
+  ArcOS OSPFv2 + OSPFv3. Same area/area-interface shape for both AFs modulo two differences:
+  the protocol keyword (OSPF vs OSPF3), and the area ID is written as a plain integer ("area 0",
+  from ospf.areas[]._area_int) in OSPFv3, not dotted-decimal ("area 0.0.0.0") like OSPFv2.
 
-  RESOLVED (was a known open issue, found via tests/integration/ospf/ospfv2/01-network.yml, a
-  generic cross-vendor test against FRR probe nodes -- arcos-arcos adjacencies were never
-  affected): the arrcus_arcos containerlab kind brought interfaces up at a much larger MTU
-  (8974) than the frr kind's (1500), and OSPF's DBD exchange checks MTU compatibility, so an
-  ArcOS<->FRR adjacency stalled indefinitely in NEIGHBOR_EXSTART. Two real, independent causes,
-  both now fixed:
+  MULTI-AREA: one `area <id>` block is emitted per area the node participates in (netlab
+  pre-computes ospf.areas), and every interface is filed under its own ospf.area (an ABR then
+  carries interfaces in several areas under the same OSPF instance -- ArcOS accepts multiple
+  area blocks per instance, verified). The system loopback goes into loopback.ospf.area. An area
+  block is emitted only when it actually has an interface (or the loopback) in this AF, so a
+  v4-only area does not produce an empty OSPFv3 area block (or vice-versa).
 
-  1. netsim/templates/provider/clab/clab.j2 never rendered netlab's own resolved per-interface
-     MTU (nl.mtu) into the containerlab link definition, for ANY device -- so containerlab fell
-     back to each kind's own hardcoded veth-creation default (arrcus_arcos: 8974). Fixed there
-     (a general netlab-CORE fix, not ArcOS-specific): the link now carries containerlab's native
-     `mtu:` property whenever netlab has a resolved value.
+  Known ArcOS limit (see docs/caveats.md): the ABR floods correct inter-area Type-3 summaries for
+  transit networks, but summarizes a /32 loopback host route with a /0 mask, so a loopback in a
+  NON-backbone area is not reachable from other areas. Adjacencies, intra-area routes and
+  inter-area transit prefixes are unaffected. Nothing to configure around it here -- it is an LSA
+  origination bug in this build.
 
-  2. Even with the veth created at the right MTU, ArcOS's own `interface <if> mtu <n>` config
-     leaf reprograms the real kernel netdev MTU -- and the MTU value OSPF's DBD advertises --
-     to (configured-leaf - 26) on every commit (live-confirmed: leaf 1500 -> kernel/advertised
-     1474; leaf 2000 -> 1974; leaf 1526 -> exactly 1500; matches the platform's own unset-leaf
-     default of 9000 -> the originally observed 8974). A previous attempt to set the leaf to
-     the bare intended value (1500) "committed clean" but silently undershot by 26 and looked
-     like a no-op -- it wasn't a no-op, it just needed the +26 compensation. Fixed in
-     netsim/ansible/templates/initial/arcos.j2: `interface <if> mtu {{ l.mtu + 26 }}`.
-
-  Both fixes are required together; live-verified with the unmodified generic test (4/4 pass,
-  OSPF reaches Full on both the broadcast and point-to-point links).
+  MTU interop note: an ArcOS<->FRR OSPF adjacency needs both sides to advertise the same MTU in
+  their DBD exchange. ArcOS reprograms the real kernel netdev MTU (and the value OSPF advertises)
+  to (configured-leaf - 26) on every commit, so netsim/ansible/templates/initial/arcos.j2 sets
+  the interface MTU leaf to `l.mtu + 26` to land exactly on netlab's intended value. With that
+  device-side compensation the adjacency converges without any containerlab/core change.
 #}
-{% macro area_interfaces(af) %}
-{% for l in interfaces|default([]) if l.ospf is defined and l[af] is defined %}
-  interface {{ l.ifname }}
-{# BUG FIX (issue #39, found via a generic cross-vendor OSPF test against an FRR probe --
-   tests/integration/ospf/ospfv2/01-network.yml, which explicitly sets ospf.network_type:
-   broadcast on one link and point-to-point on another between the SAME two devices):
-   1) netlab's canonical ospf.network_type value is "point-to-point" (hyphen) -- see
-      netsim/modules/ospf.py's network_type() allowed-value list. This template (and the
-      out-of-tree reference it was ported from) checked for "point_to_point" (underscore),
-      which never matched.
-   2) The `l.type == 'p2p'` fallback (inherited from the out-of-tree reference) unconditionally
-      forced POINT_TO_POINT_NETWORK on any 2-node link regardless of an explicit
-      ospf.network_type -- so even after fixing (1), a link explicitly marked
-      `ospf.network_type: broadcast` still rendered as point-to-point (a 2-node link is always
-      netlab type p2p), stalling the FRR<->ArcOS adjacency in ExStart when the two sides then
-      disagreed on network type. Fix: only fall back to l.type == 'p2p' when
-      ospf.network_type was NOT explicitly set; an explicit "broadcast" now renders nothing
-      (ArcOS's own default network-type), matching netlab's semantics for every other device.
-   The out-of-tree reference's own test topologies never explicitly set ospf.network_type at
-   all, so neither bug was ever exercised there. #}
-{% set nt = l.ospf.network_type|default('point-to-point' if l.type|default('') == 'p2p' else '') %}
-{% if nt == 'point-to-point' %}
-   network-type POINT_TO_POINT_NETWORK
-{% endif %}
-{% if l.ospf.cost is defined %}
-   metric {{ l.ospf.cost }}
-{% endif %}
-{% if l.ospf.bfd|default(ospf.bfd|default(false)) %}
-   bfd enabled true
-{% endif %}
-{% if l.ospf.priority is defined %}
-   priority {{ l.ospf.priority }}
-{% endif %}
-{% if l.ospf.timers.hello is defined %}
-   timers hello-interval {{ l.ospf.timers.hello }}
-{% endif %}
-{% if l.ospf.timers.dead is defined %}
-   timers dead-interval {{ l.ospf.timers.dead }}
-{% endif %}
-{% endfor %}
-{% endmacro %}
 {% set pid = ospf.process|default(1) %}
-{% if ospf.router_id is defined and ospf.af.ipv4|default(true) %}
+{% set _dflt_area = ospf.area|default('0.0.0.0') %}
+{% set _areas = ospf.areas|default([{'area': _dflt_area, '_area_int': 0}]) %}
+{% macro area_interfaces(af, area_dotted) %}
+{%   for l in interfaces|default([]) if l.ospf is defined and l[af] is defined and (l.ospf.area|default(_dflt_area)) == area_dotted %}
+  interface {{ l.ifname }}
+{# network-type selection (matches netlab's cross-vendor OSPF semantics):
+   1) netlab's canonical ospf.network_type value is "point-to-point" (hyphen) -- see
+      netsim/modules/ospf.py's network_type() allowed-value list; match that spelling.
+   2) fall back to point-to-point on a 2-node p2p link ONLY when ospf.network_type was not set
+      explicitly, so an explicit `ospf.network_type: broadcast` is honoured (a 2-node link is
+      always netlab type p2p) rather than forced to point-to-point, which would stall an
+      FRR<->ArcOS adjacency in ExStart on a network-type mismatch. An explicit "broadcast"
+      renders nothing (ArcOS's own default network-type). #}
+{%     set nt = l.ospf.network_type|default('point-to-point' if l.type|default('') == 'p2p' else '') %}
+{%     if nt == 'point-to-point' %}
+   network-type POINT_TO_POINT_NETWORK
+{%     endif %}
+{%     if l.ospf.cost is defined %}
+   metric {{ l.ospf.cost }}
+{%     endif %}
+{#-  Passive interface. netlab sets ospf.passive both explicitly (link-level ospf.passive)
+     and implicitly on a stub link, and the flag is a plain bool, so it is rendered whenever
+     it is true. This macro serves OSPFv2 and OSPFv3 alike, so both address families get it. -#}
+{%     if l.ospf.passive|default(false) %}
+   passive true
+{%     endif %}
+{%     if l.ospf.bfd|default(ospf.bfd|default(false)) %}
+   bfd enabled true
+{%     endif %}
+{%     if l.ospf.priority is defined %}
+   priority {{ l.ospf.priority }}
+{%     endif %}
+{%     if l.ospf.timers.hello is defined %}
+   timers hello-interval {{ l.ospf.timers.hello }}
+{%     endif %}
+{%     if l.ospf.timers.dead is defined %}
+   timers dead-interval {{ l.ospf.timers.dead }}
+{%     endif %}
+{%   endfor %}
+{% endmacro %}
+{#  Build the areas FIRST and emit the instance only if at least one of them has content.
+    Keying the instance on ospf.af alone leaves a stranded "network-instance ... protocol OSPF"
+    carrying a router-id and nothing else when no area qualifies -- which the device accepts and
+    keeps. Easy to reach once the system loopback is excluded because the device owns it: a
+    single-family link is then all that is left, and the other family has nothing at all. Same
+    defect class as the DNOS empty-instance one. #}
+{% if ospf.router_id is defined and ospf.af.ipv4|default(false) %}
+{%   set _v4 %}
+{%     for a in _areas %}
+{%       set _has_lb = loopback.ipv4 is defined and (loopback.ospf.area|default(_dflt_area)) == a.area
+                        and netlab_manage_identity|default(True) %}
+{%       set _body %}{{ area_interfaces('ipv4', a.area) }}{% endset %}
+{%       if _has_lb or _body.strip() %}
+ area {{ a.area }}
+{%         if _has_lb %}
+  interface loopback0
+{%         endif %}
+{{ _body }}
+{%       endif %}
+{%     endfor %}
+{%   endset %}
+{%   if _v4.strip() %}
 network-instance default protocol OSPF p{{ pid }}
  global router-id {{ ospf.router_id }}
  global log-adjacency-changes LOG_ADJ_ENABLE_DETAILED
- area {{ ospf.area | default("0.0.0.0") }}
-{% if loopback.ipv4 is defined %}
-  interface loopback0
-{% endif %}
-{{ area_interfaces('ipv4') }}
+{{ _v4 }}
+{%   endif %}
 {% endif %}
 {% if ospf.router_id is defined and ospf.af.ipv6|default(false) %}
-{% set area3 = '0' if (ospf.area|default('0.0.0.0')) == '0.0.0.0' else ospf.area %}
+{%   set _v6 %}
+{%     for a in _areas %}
+{%       set _has_lb = loopback.ipv6 is defined and (loopback.ospf.area|default(_dflt_area)) == a.area
+                        and netlab_manage_identity|default(True) %}
+{%       set _body %}{{ area_interfaces('ipv6', a.area) }}{% endset %}
+{%       if _has_lb or _body.strip() %}
+ area {{ a._area_int }}
+{%         if _has_lb %}
+  interface loopback0
+{%         endif %}
+{{ _body }}
+{%       endif %}
+{%     endfor %}
+{%   endset %}
+{%   if _v6.strip() %}
 network-instance default protocol OSPF3 p{{ pid }}
  global router-id {{ ospf.router_id }}
  global log-adjacency-changes LOG_ADJ_ENABLE_DETAILED
- area {{ area3 }}
-{% if loopback.ipv6 is defined %}
-  interface loopback0
-{% endif %}
-{{ area_interfaces('ipv6') }}
+{{ _v6 }}
+{%   endif %}
 {% endif %}

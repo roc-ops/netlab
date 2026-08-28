@@ -1,0 +1,67 @@
+{# DNOS BGP. netlab address families map onto DNOS afi-safi names by suffixing "-unicast", so a
+   single loop covers both rather than duplicating the block per family.
+
+   IDENTITY: router-id is only rendered when netlab is the owner of record. On a device netlab
+   did not create, "load merge" would otherwise REPLACE the running BGP router-id of a box that
+   is already peering -- the same overwrite class as the hostname and loopback (see
+   netsim/providers/external.py and RocContLab issues #70/#72). Left unset, DNOS derives it.
+
+   IBGP OVER LOOPBACKS ON A DEVICE NETLAB DOES NOT OWN: netlab plans neighbour addresses from its
+   own loopback pool, but "initial" deliberately does not configure the loopback of such a device,
+   so those addresses exist nowhere and the sessions cannot come up. "update-source" below names
+   the real interface, whose address is whatever the box already had. The fix is not a template
+   guard -- it is to tell netlab the truth in the topology:
+
+       nodes:
+         RNS72XC:
+           loopback.ipv4: 192.0.2.5/32
+           loopback.ipv6: 2001:db8:ffff::5/128
+
+   BOTH families need pinning. Pinning only IPv4 fixes only the IPv4 session: the IPv6 neighbour
+   addresses still come from netlab's pool, so on a dual-stack topology the IPv6 iBGP session is
+   left exactly as dead as before, silently. Use the addresses the box actually has -- read them
+   with "show config interface lo0".
+
+   With the real loopback pinned, the planned neighbour addresses match the hardware and iBGP is
+   coherent. Without it, expect sessions that configure cleanly and never establish -- and now
+   also an origination statement for an address that does not exist. The "network" statements
+   below are rendered for every node, including one whose loopback netlab deliberately did not
+   configure; DNOS accepts the statement and advertises nothing, because there is no matching
+   route, so the effect is inert rather than harmful. Pinning the loopback fixes both at once. #}
+{% import "dnos.macro.j2" as dn with context %}
+protocols
+  bgp {{ bgp.as }}
+{% if netlab_manage_identity|default(True) %}
+    router-id {{ bgp.router_id }}
+{% endif %}
+{% for af in ["ipv4","ipv6"] if bgp[af] is defined %}
+    address-family {{ af }}-unicast
+{#  bgp.advertise is netlab's own list of prefixes this node should originate -- the loopback
+    when bgp.advertise_loopback is set, plus any link marked bgp.advertise. Without these the
+    sessions come up and carry nothing, which looks like a working lab right up to the point
+    where someone checks the routing table.
+
+    A loopback prefix has to be originated as the /128 that initial/dnos.j2 actually configured
+    rather than the /64 netlab planned. That rule is shared with initial/dnos.j2 in
+    templates/dnos.macro.j2 instead of being restated here, because the two have to agree: BGP
+    originating something the interface template did not configure advertises nothing, silently.
+#}
+{%   for pfx in bgp.advertise|default([]) if af in pfx %}
+      network {{ dn.origination(pfx[af],af,netlab_interfaces|default([])) }}
+{%   endfor %}
+    !
+{% endfor %}
+{% for n in bgp.neighbors|default([]) %}
+{%   for af in ["ipv4","ipv6"] if n[af] is defined and n[af] is not sameas true %}
+    neighbor {{ n[af] }}
+      remote-as {{ n.as }}
+{%     if n.type == "ibgp" %}
+      update-source {{ loopback.ifname }}
+{%     endif %}
+      address-family {{ af }}-unicast
+      !
+    !
+{%   endfor %}
+{% endfor %}
+  !
+!

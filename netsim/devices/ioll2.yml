@@ -1,5 +1,5 @@
 ---
-description: IOSv L2 image
+description: Cisco IOL layer-2 image
 parent: iol
 lag_interface_name: "Port-channel{lag.ifindex}"
 
@@ -20,6 +20,8 @@ features:
   lag:
     mlag: False
     passive: True
+  tunnel:
+    gre: [ vrf, ipv4 ]
 clab:
   group_vars:
     netlab_device_type: ioll2

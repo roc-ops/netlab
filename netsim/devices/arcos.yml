@@ -1,115 +1,33 @@
 ---
-# Arrcus ArcOS device definition (issue #39) -- proper, upstreamable netlab device.
+# Arrcus ArcOS device definition -- a containerlab (arrcus_arcos) network device.
 #
-# This is a FRESH build following the netlab device dev guide (docs/dev/devices.md), separate
-# from RocContLab's out-of-tree `netlab/arcos/` device (issue #5, gNMI-validated reference).
-# The out-of-tree device supplied the verified per-module config logic and the platform notes
-# (see wiki/okf/arcos-8.5/); this file wires the same platform into netlab conventions.
+# CONFIG DEPLOYMENT
 #
-# CONNECTION MODEL (the crux of issue #39):
+# netlab's native "sh" config mode (netlab.tools/dev/config/deploy/#linux-configuration-scripts):
+# each module's configuration is rendered into /config/netlab/NN-<module>.sh with a
+# '#!/config/netlab/netlab-config.sh' shebang and deployed with `docker exec <node> <script>`. The
+# shebang hands the rendered config to the mapped wrapper
+# netsim/templates/provider/clab/arcos/netlab-config.j2, which loads it with confd_cli
+# (`config` / `load merge <file>` / `commit`). No Ansible is involved in deployment -- this is the
+# same mapped-script pattern Juniper cRPD uses (netsim/devices/crpd.yml +
+# netsim/templates/provider/clab/crpd/netlab-config.j2), only the CLI back end differs.
 #
-# PREFERRED, currently BLOCKED: ArcOS ships an official, actively maintained Ansible collection,
-# `arrcus.arcos` (Galaxy, namespace arrcus, checked versions 2.0.13-2.0.18 -- the full set
-# currently published -- requires ansible>=2.15), with a cliconf + terminal plugin pair and
-# arcos_command/arcos_config modules over `ansible.netcommon.network_cli`. Its own README states
-# plainly: "The ArcOS collection supports network_cli connections." That's the right,
-# project-recommended model, and everything up to the final commit call is live-verified
-# working (network_cli connects/authenticates, ansible.netcommon.net_put stages files, and
-# manually replaying the device's own `config`/`load merge <path>`/`commit`/`end` sequence over
-# a raw SSH session succeeds instantly) -- but every published arrcus.arcos version (2.0.13
-# through 2.0.18 checked) hardcodes an `arcos_cli` mode-switch command and a `config terminal`
-# invocation in its cliconf/terminal plugins that this ArcOS build's confd_cli rejects with a
-# syntax error, hanging every arcos_command/arcos_config call at Ansible's 60s command timeout.
-# Two real, reproducible collection bugs, confirmed by locally patching the installed collection
-# then fully reverting it (see netsim/ansible/tasks/deploy-config/arcos.yml for the complete
-# account) -- worth reporting upstream to Arrcus. Flip ansible_connection back to
-# ansible.netcommon.network_cli (see the commented-out block below) once a collection version
-# without this bug ships, or if Arrcus confirms a different invocation avoids it.
+# ansible_connection: docker (clab.group_vars below) is used ONLY for the validation/collect path
+# (netlab_show_command + fetch-config over docker exec); the tested build has SSH/NETCONF/gNMI
+# disabled, so confd_cli over docker exec is the only reachable CLI. ArcOS also ships an official
+# `arrcus.arcos` network_cli collection (the project-recommended interactive model), but every
+# published version (2.0.13-2.0.18 checked) hangs on a `config terminal`/`arcos_cli` mode-switch
+# this build's confd_cli rejects, so it is not used here.
 #
-# OPERATIVE FALLBACK (this device, today): ansible_connection: docker -- Ansible's built-in
-# `docker` connection plugin, the same netlab-idiomatic pattern already used in-tree by
-# netsim/devices/sonic_clab.yml (and frr/cumulus_nvue) for containers with no usable
-# cliconf-compatible SSH CLI. `command`/`shell`/`template` tasks run directly inside the
-# container (no manual `docker exec` wrapping, no delegate_to: localhost) -- this replaces the
-# raw shell-scripted `docker exec ... confd_cli` deploy task our out-of-tree reference
-# (roccontlab netlab/arcos/) uses, with the same underlying confd_cli load-merge-commit
-# sequence, just reached the ansible-native way. gNMI is not used anywhere in this device.
+# No clab.interface.name override: the arrcus_arcos containerlab kind expects the container-side
+# veth names to match swpX, which is exactly this device's interface_name template.
 #
-# No clab.interface.name override: the arrcus_arcos containerlab kind requires the
-# container-side (Linux veth) interface names to literally match swpX -- same as the device's
-# own interface_name template below, so no translation is needed (unlike, say, Arista cEOS's
-# Ethernet<->ethX split).
-#
-# CONTAINER-IMAGE CAVEAT: the arcos:8.2.1A.P2 container image's baked-in startup config fails to
-# load (it tries to delete non-deletable built-in martian prefix-sets), so the node boots with
-# SSH/NETCONF/gNMI all *disabled* -- see wiki/okf/arcos-8.5/netlab-bootstrap.md. A real/
-# production ArcOS deployment may not have this problem; this device works around the image's
-# specific defect using netlab's native `netlab_start_exec` group_var (-> node.clab.exec ==
-# containerlab's own post-start `exec:`, no custom deploy code, no SSH needed to run it -- same
-# idiom netsim/devices/dellos10.yml uses for its own post-boot delay) to flip on ssh-server
-# (kept for `netlab connect` / interactive troubleshooting -- NOT used for config deploy, which
-# goes over ansible_connection: docker) + create an AAA user. Also live-verified required
-# (independent of SSH): ArcOS refuses to *enable interfaces at all* -- confd aborts the commit
-# -- until the factory-default admin-user password is changed
-# (`system aaa authentication admin-user admin-password ...`).
-#
-# LIVE-TESTED STATUS (real arcos:8.2.1A.P2 nodes, multilab id 51):
-#   - `netlab create`: device recognized, all 15 module templates render without error, alone
-#     and combined (initial/ospf/isis/bgp/vrf/vlan/bfd/routing/gateway/dhcp/mpls/sr/srv6/vxlan/
-#     evpn all exercised in one topology).
-#   - clab.exec bootstrap: WORKS -- SSH reachable, arcadmin login verified, admin-user password
-#     changed.
-#   - `netlab initial` (ansible_connection: docker), 2-node topology exercising initial/ospf/
-#     isis/bgp/vrf(ospf+isis)/vlan/bfd/routing.static together: WORKS END TO END on both nodes --
-#     every module commits cleanly ("Commit complete."); re-running is idempotent ("No
-#     modifications to commit."). Confirmed via `show running-config` that the rendered
-#     stanzas match exactly what was pushed, including the VLAN module's `#COMMIT`-chunked
-#     multi-commit sequence (see tasks/deploy-config/arcos.yml).
-#   - Protocol convergence, confirmed via confd state/LSDB paths (not just config-plane): OSPF
-#     adjacency reaches `NEIGHBOR_FULL` within seconds; BGP session reaches `session-state
-#     ESTABLISHED` with prefixes exchanged (1 sent/received each way) -- allow ~60-90s
-#     (connect-retry timer), matching wiki/okf/arcos-8.5/netlab-bootstrap.md's own note; IS-IS
-#     adjacency confirmed via mutual LSDB reachability (extended-is-reachability neighbor TLVs).
-#   - Live-caught combining default-instance + per-VRF protocol instances on the SAME node
-#     (never exercised together by the out-of-tree reference's per-feature-isolated test
-#     topologies): a protocol instance tag ("p1", "i1") is a GLOBAL namespace across every
-#     network-instance on this ArcOS build, not scoped per network-instance -- reusing the
-#     default instance's tag for a VRF instance of the same protocol aborts the commit. Fixed by
-#     tagging every VRF protocol instance with the VRF name (templates/vrf/arcos.j2).
-#   - Modules NOT independently re-deployed against a running node in this pass (bfd/routing/
-#     vlan above cover part of this list already) -- evpn, vxlan, lag, mpls, sr, srv6, dhcp,
-#     gateway: template logic is ported verbatim from the out-of-tree reference (each
-#     individually live-verified there against the same ArcOS build) and confirmed to render
-#     without error here, but not independently re-deployed+re-verified against a running node
-#     in this repo. Recommended follow-up before claiming full parity.
-#   - Generic cross-vendor module test (tests/integration/ospf/ospfv2/01-network.yml, ArcOS DUT
-#     against FRR probe nodes -- not an arcos-arcos topology): caught two real template bugs,
-#     both fixed here -- (1) ospf.j2 compared against "point_to_point" (underscore) where
-#     netlab's canonical value is "point-to-point" (hyphen), so an explicit network_type never
-#     took effect; (2) the `l.type == 'p2p'` fallback unconditionally forced point-to-point on
-#     any 2-node link even when a topology explicitly requested "broadcast", since a 2-node
-#     link is always netlab type p2p -- fixed to only fall back when network_type isn't
-#     explicitly set (same fix applied to templates/vrf/arcos.j2's OSPF/ISIS sections by
-#     inspection, not independently re-tested). A third, real gap was also found and FIXED
-#     (issue #39 follow-up): the FRR<->ArcOS adjacency stalled in NEIGHBOR_EXSTART because
-#     the arrcus_arcos containerlab kind's default veth MTU (8974) didn't match the frr
-#     kind's (1500). Two-layer fix, both required: (a) netsim/templates/provider/clab/clab.j2
-#     now renders netlab's own already-resolved per-interface MTU (nl.mtu) as containerlab's
-#     native link-level `mtu:` property, so the veth is created at the correct MTU on both
-#     ends from the start -- a general netlab-CORE fix, not ArcOS-specific (the key was
-#     previously silently dropped for every clab device); (b) ArcOS's OWN `interface mtu`
-#     confd leaf turned out to be necessary too -- ArcOS reprograms the real kernel netdev
-#     MTU (and what it advertises in OSPF's DBD) to (configured-leaf - 26) on every commit,
-#     so netsim/ansible/templates/initial/arcos.j2 now sets the leaf to `l.mtu + 26` to land
-#     exactly on netlab's intended MTU; setting the bare intended value (tried previously)
-#     silently undershoots by 26 and looked like a no-op. Both fixes are live-verified: the
-#     unmodified generic test now passes 4/4 (OSPF reaches Full on both the broadcast and
-#     point-to-point links, SPF routes propagate end to end).
-#   - One caveat found along the way: confd occasionally rejects a commit with "the
-#     configuration database is locked by session none" for a few seconds right after another
-#     confd_cli session on the same node (e.g. right after the mgmt bootstrap) -- transient,
-#     same class of issue as the confd lock OcNOS hits (netlab/ocnos/unlock.py in the
-#     out-of-tree reference); tasks/deploy-config/arcos.yml retries on this specific message.
+# CONTAINER-IMAGE BOOTSTRAP: the tested image boots with SSH/NETCONF/gNMI disabled (its baked-in
+# startup config fails to load a built-in prefix-set), and ArcOS refuses to enable interfaces
+# until the factory-default admin-user password is changed. Both are handled with netlab's native
+# `netlab_start_exec` group_var (-> node.clab.exec == containerlab's post-start `exec:`, the same
+# idiom netsim/devices/dellos10.yml uses), which enables ssh-server (for interactive `netlab
+# connect`, not for config deploy), sets the admin-user password, and creates an AAA user.
 description: Arrcus ArcOS
 interface_name: swp{ifindex}
 ifindex_offset: 1
@@ -119,74 +37,25 @@ lag_interface_name: "bond{lag.ifindex}"
 tunnel_interface_name: tunnel{ifindex}
 role: router
 support:
-  level: minimal   # community/out-of-tree-derived device -- same convention as sonic_clab.yml
-  caveats:
-  - >-
-    Config deployment uses Ansible's 'docker' connection plugin (docker exec running
-    confd_cli), not network_cli -- live-verified working end to end (initial/ospf/bgp commit
-    cleanly, idempotent, OSPF reaches NEIGHBOR_FULL, BGP reaches ESTABLISHED). network_cli via
-    the official arrcus.arcos collection is the preferred model per the platform's own docs,
-    but every published version (2.0.13 through 2.0.18) hangs on this ArcOS build; two real
-    bugs root-caused, see tasks/deploy-config/arcos.yml. Flip back to network_cli once fixed
-    upstream.
-  - >-
-    arcos:8.2.1A.P2's baked-in startup config fails to load (built-in martian prefix-sets are
-    non-deletable), so SSH/NETCONF/gNMI all boot disabled; netlab_start_exec bootstraps
-    ssh-server + an AAA user + the mandatory admin-user password change before any config can
-    be committed. See wiki/okf/arcos-8.5/netlab-bootstrap.md.
-  - >-
-    Genuinely unsupported, not just untested (verdicts carried over from the out-of-tree
-    reference's live probing, re-verified here where noted per-template): EVPN symmetric IRB /
-    L3VNI (route-type-5 is never originated -- see templates/evpn/arcos.j2); VRF route-target
-    leaking (no rd/RT/L3VPN model); OSPFv2 area-interface authentication; routing-policy
-    large/extended-community set-actions (standard only); redistribution sources other than
-    static (no addressable src-instance for connected on this image); SR-MPLS/LDP label
-    forwarding (native container has no kernel MPLS platform-labels -- control plane only).
-    bgp.session and other dotted plugins are not yet ported.
-  - >-
-    RESOLVED (was STILL OPEN): the ArcOS<->FRR cross-vendor MTU mismatch that stalled
-    generic-test OSPF in NEIGHBOR_EXSTART is fixed -- see netsim/templates/provider/clab/clab.j2
-    (renders netlab's resolved interface MTU as containerlab's link-level `mtu:`) and
-    netsim/ansible/templates/initial/arcos.j2 (`interface <if> mtu {{ l.mtu + 26 }}` -- ArcOS
-    reprograms the real kernel/OSPF-advertised MTU to configured-leaf-minus-26 on every commit,
-    confirmed by live probing three data points). tests/integration/ospf/ospfv2/01-network.yml
-    now passes 4/4 unmodified. BGP (tests/integration/bgp/01-ebgp-session.yml) also reaches
-    Established with the same fix -- but needs ArcOS's documented ~60-90s connect-retry window
-    (see the ospf/bgp convergence caveat above), which is longer than that generic test's
-    default 30s wait, so a bare `netlab validate` run right after `netlab initial` can catch it
-    still in OpenConfirm/Idle; re-running validate (or widening the wait) after ~75s shows both
-    sessions Established with the beacon prefix propagated -- confirmed on two independent
-    fresh boots, not a fluke.
+  level: best-effort
 group_vars:
   netlab_device_type: arcos
-  # Set unconditionally (harmless with ansible_connection: docker below -- it's only a
-  # descriptive/path-lookup variable, network_cli transport is controlled by
-  # ansible_connection alone) -- several netlab core playbooks (e.g. wait-for-ready.yml's
-  # readiness-script lookup) reference ansible_network_os unconditionally and fail outright if
-  # it's undefined, regardless of which connection plugin is actually in use.
+  # Set unconditionally (harmless with ansible_connection: docker below -- it is only a
+  # descriptive/path-lookup variable): several netlab core playbooks reference
+  # ansible_network_os unconditionally regardless of which connection plugin is in use.
   ansible_network_os: arrcus.arcos.arcos
   netlab_check_retries: 60
   netlab_check_delay: 10
-  # One-time management bootstrap (netlab-native: 'netlab_start_exec' is copied by
-  # netsim/providers/clab/utils.py::add_clab_exec into node.clab.exec == containerlab's own
-  # post-start `exec:` list -- no SSH, no custom deploy mechanism, same idiom dellos10.yml uses
-  # for its post-boot delay). Retries for ~5 minutes because ConfD takes ~90s to accept
-  # confd_cli connections on a cold boot. MERGEs (not replaces) so the image's broken startup
-  # config / built-in martian prefix-sets are never touched. See
-  # wiki/okf/arcos-8.5/netlab-bootstrap.md for the verified sequence.
+  # One-time management bootstrap copied into node.clab.exec (== containerlab's post-start
+  # `exec:` list) by netsim/providers/clab/utils.py::add_clab_exec -- no SSH, no custom deploy
+  # mechanism. Retries for ~5 minutes because ConfD takes ~90s to accept confd_cli connections on
+  # a cold boot. It MERGEs (not replaces) so the image's own startup config is never touched.
   #
-  # NOTE: the generic clab.j2 provider template renders this list with a plain Jinja/Python
-  # str() of the list, not a real YAML dumper -- it produces valid output only when the command
-  # contains no single quotes and no backslashes (both trip Python repr()'s escaping in ways
-  # containerlab's YAML parser chokes on or misinterprets). Hence: double quotes only, and
-  # per-line `echo` instead of a `printf '...\n...'` block.
-  #
-  # Also live-verified required (not just for SSH login): ArcOS refuses to *enable interfaces
-  # at all* -- confd aborts the commit -- until the factory-default admin-user password is
-  # changed (`system aaa authentication admin-user admin-password ...`), independent of the
-  # arcadmin AAA user created below. Confirmed by reproducing the exact abort netlab initial
-  # hit before this line was added: "Admin user password ... still not changed from factory
-  # default password. Interfaces cannot be enabled!"
+  # NOTE: the generic clab.j2 provider template renders this list with a plain str() of the list,
+  # not a real YAML dumper, so it produces valid output only when the command contains no single
+  # quotes and no backslashes -- hence double quotes only and per-line `echo` (not a printf
+  # block). ArcOS also refuses to enable interfaces at all until the factory-default admin-user
+  # password is changed, so that change is part of this bootstrap.
   netlab_start_exec:
   - >-
     bash -c "for i in $(seq 1 60); do { echo config; echo system ssh-server enable true;
@@ -194,6 +63,29 @@ group_vars:
     echo system aaa authentication user arcadmin password Arcos@1234 role SYSTEM_ROLE_ADMIN;
     echo commit; echo end; } | confd_cli -C -u admin 2>&1 |
     grep -qE -e Commit.complete -e No.modifications && exit 0; sleep 5; done; exit 1"
+  # VRRP daemon bootstrap -- restores the systemd default file-descriptor soft limit.
+  #
+  # The ArcOS process manager (spyder) starts vrrp.bin lazily: the first VRRP config commit turns
+  # the daemon on. spyder.service sets no LimitNOFILE, so systemd starts spyder at its default
+  # 1024 soft limit -- but /usr/sbin/spyder is a Python program that raises its OWN soft limit to
+  # 4096 in main() (resource.setrlimit; the hard limit is left alone). vrrp.bin inherits that 4096
+  # and is linked against liblttng-ust, whose fd tracker indexes a 1024-entry fd_set with the
+  # inherited limit, so it aborts in its constructor ("bit out of range 0 - FD_SETSIZE on fd_set",
+  # signal 6; the same code path reports "fd-tracker.c: lttng_ust_add_fd_to_tracker: Assertion
+  # IS_FD_VALID(fd) failed"). spyder gives up after three retries, so the device commits the VRRP
+  # config, reports it in the running config, and never runs the protocol.
+  #
+  # containerlab 0.77 has no per-node ulimit knob, so the soft limit is put back to systemd's
+  # default on the already-running spyder. Only the soft limit is touched, and only processes
+  # spyder forks afterwards inherit it. This does not leave anything fd-starved: ArcOS daemons
+  # raise their own RLIMIT_NOFILE once running (vrrp.bin settles at 4096 soft / 8192 hard), so the
+  # lowered value governs only the window between fork and the daemon's own setrlimit -- which is
+  # exactly the window the liblttng-ust constructor runs in. spyder.service has no Restart=, so
+  # the adjustment cannot be silently undone during a lab's life.
+  - >-
+    bash -c "for i in $(seq 1 60); do P=$(systemctl show spyder --property=MainPID --value);
+    if [ 0$P -gt 1 ]; then prlimit --pid $P --nofile=1024: && exit 0; fi;
+    sleep 5; done; exit 1"
   # PREFERRED (currently blocked -- see support.caveats above); flip to this once a working
   # arrcus.arcos version ships (ansible_network_os is already set above):
   # ansible_connection: ansible.netcommon.network_cli
@@ -202,24 +94,35 @@ group_vars:
   # ansible_ssh_pass: Arcos@1234
   # netlab_ready: [ ssh ]
 #
-# Module coverage below is ported wholesale from the out-of-tree reference (roccontlab
-# netlab/arcos/arcos.yml), which reached it through live testing across 17 module templates on
-# a real arcos:8.2.1A.P2 node -- see wiki/okf/arcos-8.5/ for the full per-item evidence. Deploy
-# mechanics differ (ansible_connection: docker + confd_cli here vs. gNMI-validated docker-exec
-# there) but the rendered CLI is identical, so the out-of-tree verification carries over
-# directly; re-verified live in this repo per the per-module notes below. Deliberately NOT
-# declared (genuinely unsupported, not just untested -- see the per-template comments and
-# wiki/okf/arcos-8.5/ for the live-probed reason): OSPFv2 area-interface authentication (confd
-# advertises the leaf in help but rejects every value form on commit); VRF route-target
-# import/export leaking (no rd/RT/L3VPN model on this image); EVPN symmetric IRB / L3VNI
-# (network-instance/BGP-VPN config commits cleanly but the control plane never originates a
-# route-type-5 prefix -- see templates/evpn/arcos.j2); routing-policy large/extended community
-# set-actions (ArcOS only has an inline standard-community set action); BGP/OSPF/ISIS
-# redistribution sources other than static (no addressable src-instance for
-# connected/DIRECTLY_CONNECTED on this image); SR-MPLS/LDP label FORWARDING (native container
-# has no kernel MPLS platform-labels -- control plane only); the bgp.session dotted plugin
-# (per-neighbor password/gtsm/timers/passive/bfd) and other dotted plugins -- not yet ported,
-# same for `netlab collect` validate assertions beyond running-config text.
+# Deliberately NOT declared (genuinely unsupported, not just untested -- see the per-template
+# comments for the reason): OSPFv2 area-interface authentication (confd advertises the leaf but
+# rejects every value form on commit); EVPN symmetric IRB / L3VNI (the L3VNI comes up and type-5
+# routes ARE originated and can be imported -- what fails is advertising the local ones to the EVPN
+# peer, see the caveat above and templates/evpn/arcos.j2); routing-policy
+# EXTENDED-community operations of any kind -- matching, setting and deleting (ext-community-set
+# exists in the model but was never verified; standard and LARGE communities are fully supported,
+# see features.routing.policy and templates/routing/arcos.j2);
+# anycast gateways (nothing renders them -- VRRP is the only FHRP the gateway template configures,
+# and it renders for both IPv4 and IPv6);
+# redistribution INTO an IGP: OSPF accepts no import source at all, and IS-IS accepts only static
+# (features.isis.import) -- so BGP-into-OSPF and BGP-into-IS-IS are not supported, even though the
+# ArcOS "table-connection BGP OSPF IPV4 src-dst-instance <bgp> <ospf>" form does commit; it is
+# neither rendered nor verified. (Redistribution INTO BGP is a different matter and IS supported
+# for connected/static/OSPF/IS-IS -- see features.bgp.import and templates/bgp/arcos.macro.j2.)
+# SR-MPLS/LDP label FORWARDING (the native container has no kernel MPLS
+# platform-labels -- control plane only); the bgp.session dotted plugin and other dotted plugins.
+#
+# Inter-VRF route leaking, RT/L3VPN form: measured as unsupported on this image, not merely
+# untested. The export side can be brought all the way to "Export ready" (RD + rt-afi-safi
+# L3VPN_IPV4_UNICAST route targets + a BGP_COMMON reserved-label-block + label-allocation-mode
+# PER_PREFIX), and the VPN routes appear in the per-VRF exported-rib with the right route targets
+# and labels, but a locally exported VPN path is never presented to the local import machinery: the
+# default instance's L3VPN loc-rib stays empty and every VRF stays at "paths-imported 0".
+# ArcOS's OTHER leaking mechanism -- "static-route <pfx> next-hop-index N
+# next-network-instance-name <vrf>" -- does work locally and does forward, but only for /32 host
+# routes ("Expect /32 v4 prefix when configuring static route with next-network-instance option"),
+# so it cannot express netlab's prefix-based import/export lists. Neither form is rendered -- see
+# the caveats above and templates/vrf/arcos.j2.
 features:
   initial:
     ipv4:
@@ -236,9 +139,14 @@ features:
     activate_af: true
     ipv6_lla: false
     local_as: true
-    import: [ static ]
+    # 'connected' is rendered as BGP network statements, not as a table-connection -- ArcOS has no
+    # usable DIRECTLY_CONNECTED redistribution source; 'ospf' and 'isis' are OpenConfig
+    # table-connections (OSPF/OSPF3/ISIS -> BGP) in the default instance and inside a VRF alike.
+    # See templates/bgp/arcos.macro.j2. Every source honours an import routing policy, so
+    # 'no_policy' is deliberately not declared. 'bgp' (BGP -> BGP) and 'ripv2' are not supported.
+    import: [ connected, ospf, isis, static, vrf ]
     # bgp.session (per-neighbor password/gtsm/timers/passive/bfd) is a separate netlab plugin
-    # template -- live-verified out-of-tree but not yet ported into this increment.
+    # template and is not yet supported.
   isis:
     circuit_type: true
     import: [ static ]
@@ -261,37 +169,114 @@ features:
   vlan:
     model: l3-switch
     svi_interface_name: "vlan{vlan}"
-    subif_name: "{ifname}.{subif_index}"
+    # An ArcOS routed VLAN subinterface is "subinterface <id>" under the parent port, and the
+    # subinterface ID *is* the 802.1Q tag (verified on the device: "interface swp1 subinterface
+    # 701" reports back "vlan vlan-id 701"), so subinterfaces are named <parent>.<vlan-id>
+    subif_name: "{ifname}.{vlan.access_id}"
     native_routed: true
   lag:
     passive: false        # ArcOS bonds are LACP-active; STATIC = balance-xor
+  stp:
+    # ArcOS runs spanning tree by default and speaks exactly one flavour: the "stp
+    # enabled-protocol" leaf's own value list is { NONE | RAPID_PVST } with RAPID_PVST the
+    # default. There is no 802.1D, no plain RSTP and no MSTP, so only 'pvrst' is declared -- every
+    # other protocol becomes an explicit netlab error instead of a silent mis-render.
+    supported_protocols: [ pvrst ]
+    # The only off switch is the GLOBAL "stp enabled-protocol NONE": "stp interface <if>" has no
+    # 'enabled' leaf, so STP cannot be turned off on a single port.
+    enable_per_port: False
+    # 'port_type' is deliberately NOT declared. The flag is a bare boolean, so declaring it claims
+    # all four netlab values; edge/auto/normal map onto "stp interface <if> edge-port", but
+    # 'network' has no per-port equivalent -- ArcOS bridge assurance is a global knob
+    # ("stp global bridge-assurance"). Declaring it would silently mis-render port_type: network.
   gateway:
-    protocol: [ vrrp, anycast ]
+    # Anycast gateway is NOT supported: templates/gateway/arcos.j2 renders VRRP only and the
+    # anycast form is untested on this image. VRRP itself is declared for both address families,
+    # but only IPv6 interoperates with other netlab devices -- see the IPv4-checksum caveat above.
+    protocol: [ vrrp ]
   dhcp:
     relay: true
     vrf: true
   routing:
-    static: true
+    static:
+      vrf: true         # network-instance <vrf> protocol STATIC <vrf> -- verified, IPv4 and IPv6
+      discard: true     # next-hop DROP -- installs as a blackhole route, verified
+      # inter_vrf is deliberately NOT declared: ArcOS expresses an inter-VRF next hop as
+      # next-network-instance-name, which takes host routes only (/32 v4, /128 v6), so it cannot
+      # carry netlab's prefix-based static routes. See the caveat in support.caveats.
     prefix: true
+    # BGP community lists are ArcOS "routing-policy defined-sets bgp-defined-sets community-set /
+    # large-community-set". Members may be literals or regular expressions (verified: a member of
+    # "65101:4.*" matched a route carrying 65101:42 and left an untagged route alone), so both the
+    # standard and the expanded list types are declared. EXTENDED community lists exist in the
+    # model (ext-community-set) but are not exercised anywhere and are deliberately not declared.
+    community:
+      standard: [ standard, expanded ]
+      large: [ standard, expanded ]
     policy:
       match:
         prefix: true
+        # "conditions bgp-conditions match-community-set / match-large-community-set", each with
+        # match-set-options ANY. Both verified by effect on a peer, not just by commit.
+        community:
+          standard: true
+          large: true
       set:
         locpref: true
         med: true
-        community: true   # standard communities only -- see templates/routing/arcos.j2
+        # Standard communities are set inline ("set-community method INLINE"); LARGE communities
+        # only through a reference to a large-community-set ("set-large-community method REFERENCE"
+        # -- there is no INLINE form for them). 'extended' is NOT declared: it was never verified,
+        # and declaring the bare 'community: true' this used to carry silently claimed it.
+        community:
+          standard: true
+          large: true
+          append: true
+      # ArcOS removes communities by referencing a community-set, not by listing values inline for
+      # large communities, so netlab is asked to turn every delete request into a community list
+      # ('clist'): netsim/modules/routing/clist.py then auto-generates the list and both the
+      # literal and the by-list forms end up on one rendering path. The per-family gate is
+      # features.routing.community above, so deleting extended communities is still refused.
+      delete:
+        community: clist
+# All netlab devices default to MTU 1500 (netlab.tools/links/#changing-mtu). ArcOS needs this
+# explicit device default so l.mtu resolves in a no-MTU topology and initial/arcos.j2 renders the
+# interface MTU leaf -- the ArcOS interface mtu leaf is programmed as (leaf - 26), so the
+# template sets leaf = l.mtu + 26 to make ArcOS advertise/use 1500 and converge OSPF against FRR
+# (whose veths are 1500) without any containerlab/core change.
+mtu: 1500
+
 clab:
   # Users obtain their own ArcOS image (commercial NOS, same pattern as arubacx/dellos10/sros)
-  # and tag it arcos:8.2.1A.P2, or override clab.image in their topology.
+  # and tag it as below, or override clab.image in their topology.
   image: arcos:8.2.1A.P2
-  mtu: 1500
+  build: https://netlab.tools/labs/arcos/
   node:
     kind: arrcus_arcos
+    # Map the confd_cli deploy wrapper into the container. netlab renders each module's config into
+    # /config/netlab/NN-<module>.sh with a '#!/config/netlab/netlab-config.sh' shebang and runs it
+    # with `docker exec`; the shebang hands the rendered config to this wrapper, which loads it via
+    # confd_cli. Same mapped-script deploy pattern as cRPD (netsim/devices/crpd.yml).
+    config_templates:
+      netlab-config: /config/netlab/netlab-config.sh:sh
+  features:
+    initial:
+      config_mode: [ sh ]                  # enable netlab's native container-script (sh) config deploy
   group_vars:
+    # Native "sh" config mode: modules deploy through the mapped confd_cli wrapper above, not Ansible.
+    netlab_config_mode: sh
+    netlab_config_path: /config/netlab/
+    netlab_default_shebang: '#!/config/netlab/netlab-config.sh'
+    # ansible_connection: docker is used ONLY for the validation/collect path (netlab_show_command +
+    # fetch-config over docker exec); config deployment runs through the sh-mode wrapper above.
     ansible_connection: docker
     ansible_user: root
     ansible_ssh_pass: Arcos@1234           # bootstrapped 'arcadmin' login, interactive use only
     netlab_ready: [ ansible ]              # skip the SSH readiness wait -- deploy doesn't need it
+    # netlab connect/validate: run confd_cli over docker-exec (SSH/NETCONF/gNMI are disabled on
+    # this build); '| display json' yields parseable OpenConfig state. Same docker-exec path as deploy.
+    # yamllint disable-line rule:line-length
+    netlab_show_command: [ bash, -c, 'f=\$(mktemp); for i in \$(seq 1 60); do echo ''show $@ | display json'' | confd_cli -C -u admin > \$f 2>/dev/null; python3 -c ''import sys,json; json.load(open(sys.argv[1]))'' \$f 2>/dev/null && { cat \$f; rm -f \$f; exit 0; }; sleep 1; done; cat \$f; rm -f \$f' ]
 external:
   image: none
 graphite.icon: router

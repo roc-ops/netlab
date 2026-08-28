@@ -7,12 +7,14 @@ defaults.device: none
 
 nodes:
   r1:
+    provider: clab
   r2:
+    provider: libvirt
 
 links:
 - r1:
   r2:
-  name: uplink
+  linkid: uplink
 - r1:
   r2:
     role: mobile
@@ -20,7 +22,7 @@ links:
 - r1:
   r2:
   tunnel.mode: gre
-  tunnel.source.link.name: uplink
+  tunnel.source.linkid: uplink
 - r1:
     tunnel.source.link.role: backup
   r2:

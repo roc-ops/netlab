@@ -134,18 +134,23 @@ def validate_module_can_be_false(
 
 """
 check_required_keys -- checks that the required keys are present in the data structure and sets the default
-values for missing keys with _default attribute
+values for missing keys with _default attribute (when apply_defaults is True)
 """
 
-def check_required_keys(data: Box, attributes: Box, path: str,module: str) -> bool:
+def check_required_keys(
+      data: Box,
+      attributes: Box,
+      path: str,
+      module: str,
+      apply_defaults: bool = True) -> bool:
   result = True
   for k,v in attributes.items():
     if not isinstance(v,Box):
       continue
-    if '_default' in v and k not in data:
+    if apply_defaults and '_default' in v and k not in data:
       data[k] = v._default
     if '_required' in v and v._required:
-      if k in data:
+      if k in data or '_default' in v:                # Present, or _default will be applied later
         continue
       log.error(
         f"Mandatory attribute '{path}.{k}' is missing",
@@ -171,19 +176,25 @@ def validate_dictionary(
       topology: Box,
       attr_list: list,
       attributes: Box,
-      enabled_modules: list) -> bool:
+      enabled_modules: list,
+      apply_defaults: bool = True) -> bool:
 
   # Assume everything is OK
   return_value = True
 
   # Validate keys if needed
   if '_keytype' in data_type:
+    key_type = get_box(transform_validation_shortcuts(data_type._keytype))
+    validation_function = getattr(_tv,f'must_be_{key_type.type}',None)
+    if not validation_function:                                 # No validation function
+      log.fatal(f'No validation function for {key_type.type}')
     for k in data.keys():
-      if not validate_value(
-                value=k,
-                data_type=data_type._keytype,
+      if not validation_function(                                # We're validating a standalone value
+                parent=None,
+                key=k,
                 path=f'NOATTR:{parent_path}.{k}',
-                module=module):
+                module=module,
+                **get_validation_attr(key_type)):
         return_value = False
 
   # Option #1: Validate dictionary where every value is another type
@@ -209,7 +220,8 @@ def validate_dictionary(
           modules=enabled_modules,
           module=module,
           module_source=module_source,
-          attributes=attributes)
+          attributes=attributes,
+          apply_defaults=apply_defaults)
       else:                                       # Simple type that is validated with a must_be_something function
         OK = validate_item(                       # ... call the simpler item validation routine
           parent=data,
@@ -222,7 +234,8 @@ def validate_dictionary(
           topology=topology,
           attr_list=attr_list,
           attributes=attributes,
-          enabled_modules=enabled_modules)
+          enabled_modules=enabled_modules,
+          apply_defaults=apply_defaults)
 
       if OK is False:                             # Aggregate return results into a single boolean value
         return_value = False
@@ -264,9 +277,10 @@ def validate_dictionary(
         topology=topology,
         attr_list=attr_list,
         attributes=attributes,
-        enabled_modules=enabled_modules)
+        enabled_modules=enabled_modules,
+        apply_defaults=apply_defaults)
 
-  return_value = return_value and check_required_keys(data,data_type._keys,parent_path,module)
+  return_value = return_value and check_required_keys(data,data_type._keys,parent_path,module,apply_defaults)
   return return_value                             # Return final status
 
 """
@@ -285,7 +299,8 @@ def validate_list(
       topology: Box,
       attr_list: list,
       attributes: Box,
-      enabled_modules: list) -> bool:
+      enabled_modules: list,
+      apply_defaults: bool = True) -> bool:
 
   # Assume everything is OK
   return_value = True
@@ -307,7 +322,8 @@ def validate_list(
         modules=enabled_modules,
         module=module,
         module_source=module_source,
-        attributes=attributes)
+        attributes=attributes,
+        apply_defaults=apply_defaults)
     else:                                       # Simple type that is validated with a must_be_something function
       OK = validate_item(                       # ... call the simpler item validation routine
         parent=None,
@@ -320,7 +336,8 @@ def validate_list(
         topology=topology,
         attr_list=attr_list,
         attributes=attributes,
-        enabled_modules=enabled_modules)
+        enabled_modules=enabled_modules,
+        apply_defaults=apply_defaults)
 
       if OK is False:                             # Aggregate return results into a single boolean value
         return_value = False
@@ -545,7 +562,8 @@ def validate_item(
       topology: Box,
       attr_list: list,
       attributes: Box,
-      enabled_modules: list) -> typing.Any:
+      enabled_modules: list,
+      apply_defaults: bool = True) -> typing.Any:
   """
   validate_item -- validate a single item from an object:
 
@@ -687,7 +705,8 @@ def validate_item(
               topology=topology,
               attr_list=attr_list,
               attributes=attributes,
-              enabled_modules=enabled_modules)
+              enabled_modules=enabled_modules,
+              apply_defaults=apply_defaults)
 
   return OK
 
@@ -711,7 +730,8 @@ def validate_attributes(
       module_source: str = '',                          # Where did we get the list of modules?
       attributes: typing.Optional[Box] = None,          # Where to get valid attributes from
       extra_attributes: typing.Optional[Box] = None,    # Dynamic attributes (needed to validate provider and tool settings)
-      ignored: typing.Optional[list] = ['_']            # Ignored prefixes
+      ignored: typing.Optional[list] = ['_'],           # Ignored prefixes
+      apply_defaults: bool = True                       # Materialize schema _default values
         ) -> typing.Any: 
 
   #
@@ -773,7 +793,7 @@ def validate_attributes(
       'validate')
     return
 
-  check_required_keys(data,valid,data_path,module)
+  check_required_keys(data,valid,data_path,module,apply_defaults)
   check_valid_with(data,valid,data_path,data_name,module)
   for k in list(data.keys()):
     if any(k.startswith(i) for i in ignored):           # Skip internal attributes
@@ -792,7 +812,8 @@ def validate_attributes(
         enabled_modules=modules,
         topology=topology,
         attr_list=attr_list,
-        attributes=attributes)
+        attributes=attributes,
+        apply_defaults=apply_defaults)
       continue
 
     # The attribute is not valid for the base data type, but maybe...
@@ -812,7 +833,8 @@ def validate_attributes(
         modules=modules,                                # Keep the list of modules for _requires checks
         module_source=f'{module_source}(R)',            # ... but don't consider other modules during module attribute check
         module=k,                                       # Error message generated by the module
-        attributes=topology.defaults[k].attributes)     # Use module attributes
+        attributes=topology.defaults[k].attributes,     # Use module attributes
+        apply_defaults=apply_defaults)
 
       if data[k] is None:                               # If we're trying to validate module value None...
         data[k] = fixed_data                            # ... replace it with whatever recursive call returned (might be a dict)

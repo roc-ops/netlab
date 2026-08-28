@@ -12,11 +12,19 @@ The **tunnel.wireguard** plugin implements point-to-point WireGuard tunnels over
 
 ## Supported Platforms
 
-The plugin includes Jinja2 templates for the following platforms:
+You can use WireGuard tunnels with these platforms:
 
-| Operating system | WireGuard tunnels | Transport VRF |
-|------------------|:-:|:-:|
-| FRR              |✅|✅|
+```{features}
+- title: WireGuard<br>Tunnels
+  enabled: tunnel.wireguard
+- title: Transport<br>VRF
+  enabled: |-
+    'vrf' in tunnel.wireguard
+```
+
+```{tip}
+See the [integration test results](https://release.netlab.tools/_html/coverage.tunnel) for more details.
+```
 
 ## Using the Plugin
 
@@ -31,13 +39,15 @@ The link/interface parameters supported by this plugin include:
 
 * **tunnel.private_key** (base64 string) -- this node's WireGuard private key (auto-generated when missing)
 * **tunnel.public_key** (base64 string) -- this node's WireGuard public key (derived or auto-generated when missing)
-* **tunnel.listen_port** (integer, 1-65535) -- UDP listen port (default: `51820`)
+* **tunnel.listen_port** (integer, 1-65535) -- UDP listen port. When omitted, the plugin allocates a unique port per tunnel on each node, starting at `51820`[^CPD]
 * **tunnel.allowed_ips** (prefix string) -- the peer's WireGuard [allowed IPs](plugin-tunnel-wireguard-allowed-ips) (default: a default route per active address family, so `0.0.0.0/0`, `::/0`, or both `0.0.0.0/0,::/0` for a dual-stack tunnel)
 * **tunnel.persistent_keepalive** (integer) -- keepalive interval in seconds (default: `25`)
 * **mtu** (integer) -- the WireGuard tunnel interface MTU (the standard link/interface `mtu` attribute). When not specified, it is derived from the underlay source interface MTU minus the WireGuard encapsulation overhead (60 bytes for an IPv4 underlay, 80 bytes for an IPv6 underlay), so it scales with jumbo-frame underlays. With a 1500-byte underlay this yields `1440` for IPv4 transport and `1420` for IPv6 transport.
 * **tunnel.af** (`ipv4` or `ipv6`) -- the transport address family. When not specified, it is inferred from the underlay source interface: `ipv4` when an IPv4 address is available, `ipv6` for an IPv6-only underlay.
 * **tunnel.vrf** (VRF name) -- the transport VRF (default: global routing table)
 * **tunnel.source** -- the [source interface](plugin-tunnel-wireguard-source) for the tunnel underlay
+
+[^CPD]: The starting UDP port can be changed in plugin defaults.
 
 (plugin-tunnel-wireguard-keys)=
 ## WireGuard Keys
@@ -52,7 +62,7 @@ Key generation uses the **wireguard-tools** commands (`wg genkey` and `wg pubkey
 
 The remote peer's **tunnel.public_key** and UDP endpoint do not have to be specified; they are taken from the peer device attached to the same tunnel.
 
-Specify **tunnel.private_key**, **tunnel.public_key**, and **tunnel.listen_port** only when you need stable keys across lab recreations or non-default UDP ports.
+Specify **tunnel.private_key**, **tunnel.public_key**, and **tunnel.listen_port** only when you need stable keys across lab recreations or a specific UDP port. When **tunnel.listen_port** is omitted, each tunnel on a node gets a unique port starting at `51820`[^CPD].
 
 (plugin-tunnel-wireguard-allowed-ips)=
 ## Allowed IPs
@@ -71,12 +81,13 @@ Set **tunnel.allowed_ips** to a narrower prefix only when you want to restrict w
 
 The source interface/IP address for a tunnel is specified with the **tunnel.source** link/interface attribute. This attribute can have these components:
 
-* **ifindex** -- matches the source interface based on its **ifindex** (useful only when you [specify **ifindex** on interfaces](link-attributes-intf))
-* **name** -- matches link/interface **name** attribute
-* **role** -- matches link/interface **role** attribute
+* **linkid** -- matches the transport interface [link identifier](link-linkid)
 * **type** -- specifies source interface type (valid value: **loopback**)
+* **link.name** -- matches link/interface **name** attribute
+* **link.role** -- matches link/interface **role** attribute
+* **ifindex** -- matches the source interface based on its **ifindex** (useful only when you [specify **ifindex** on interfaces](link-attributes-intf))
 
-The source interface selection algorithm evaluates all interfaces in the VRF specified with the **tunnel.vrf** parameter or global interfaces when the tunnel link/interface has no **tunnel.vrf** parameter. The selected interface must match the optional **ifindex**, **name**, or **role** parameters and must have an IP address in the **tunnel.af** address family.
+The source interface selection algorithm evaluates all interfaces in the VRF specified with the **tunnel.vrf** parameter or global interfaces when the tunnel link/interface has no **tunnel.vrf** parameter. The selected interface must match the specified **tunnel.source** and **tunnel.af** parameters.
 
 When the source is not pinned to a specific interface, the plugin prefers the underlay interface connected to the tunnel peer. This helps multi-homed nodes select the correct underlay for each tunnel.
 

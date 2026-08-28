@@ -15,7 +15,7 @@
 | Virtual network device | netlab device type | support level |
 | -----------------------| ------------------ | ------------- |
 | Arista vEOS/cEOS [❗](caveats-eos) | eos    | full          |
-| Arrcus ArcOS [❗](caveats-arcos) | arcos    | minimal       |
+| Arrcus ArcOS [❗](caveats-arcos) | arcos  | best effort   |
 | Aruba AOS-CX [❗](caveats-aruba) | arubacx  | full          |
 | Cisco 8000v [❗](caveats-cisco8000v) | cisco8000v | minimal |
 | Cisco ASAv [❗](caveats-asav)    | asav     | minimal       |
@@ -49,8 +49,9 @@
 | Nokia SR OS [❗](caveats-sros)    | sros    | best effort[^SROSBE]   |
 | Nokia SR-SIM [❗](caveats-srsim)  | srsim   | full          |
 | OpenBSD [❗](caveats-openbsd)     | openbsd | best effort   |
-| Sonic [❗](caveats-sonic)         | sonic   | minimal       |
-| Sonic (containerlab) [❗](caveats-sonic-clab) | sonic_clab | minimal |
+| SONiC [❗](caveats-sonic-vm) | sonic   | minimal       |
+| Sonic (containerlab) [❗](caveats-sonic-clab-device) | sonic_clab | minimal |
+| VPP (fd.io) [❗](caveats-vpp) | vpp | minimal |
 | VyOS 1.4 [❗](caveats-vyos)       | vyos    | full          |
 
 [^SROSBE]: With the launch of the Nokia SR SIM, we stopped running integration tests for the SR-OS VM, assuming the behavior of the two products would be nearly identical.
@@ -92,6 +93,7 @@ Most devices behave as routers (or layer-3 switches); the following devices can 
 | Generic Linux         | ❌  | ✅ | ✅ |
 | Kubernetes in Docker  | ❌  | ✅ | ❌  |
 | Open BSD              | ✅ | ✅ | ❌  |
+| VPP                   | ✅ | ❌  | ✅ |
 
 **Notes:**
 
@@ -105,7 +107,7 @@ Most devices behave as routers (or layer-3 switches); the following devices can 
 **netlab create** can generate configuration files for these [virtualization providers](providers.md):
 
 * [vagrant-libvirt](https://github.com/vagrant-libvirt/vagrant-libvirt), including support for *veryisolated* private networks and UDP point-to-point tunnels.
-* [Containerlab](https://containerlab.srlinux.dev/)
+* [Containerlab](https://containerlab.dev/)
 * External -- *meta* virtualization provider that allows you to configure external physical or virtual devices with *netlab*
 
 You cannot use all supported network devices with all virtualization providers. These are the supported combinations (use **[netlab show images](netlab/show.md)** command to display the current system settings); daemons always run in containers.
@@ -115,6 +117,7 @@ You cannot use all supported network devices with all virtualization providers. 
 | Virtual network device | Vagrant<br />[Libvirt](labs/libvirt.md) | [Containerlab](labs/clab.md) |
 | ------------------ | :-: | :-: |
 | Arista vEOS        |  [✅](build-eos)  |  [✅](build-ceos)  |
+| Arrcus ArcOS       |  ❌  |  [✅](build-arcos)  |
 | Aruba AOS-CX       |  [✅](build-arubacx)  |  ✅[❗](clab-vrnetlab)  |
 | Cisco 8000v        |  ❌  |  ✅   |
 | Cisco ASAv         |  [✅](build-asav)  |  ✅ [❗](clab-vrnetlab)  |
@@ -148,7 +151,8 @@ You cannot use all supported network devices with all virtualization providers. 
 | Nokia SR OS         |  ❌  |  ✅  |
 | Nokia SR-SIM        |  ❌  |  ✅  |
 | OpenBSD             |  [✅](build-openbsd)  |  [✅](clab-vrnetlab)  |
-| Sonic               |  [✅](build-sonic)  |  ❌  |
+| SONiC               | [✅](build-sonic-box) | [✅](build-sonic-container) |
+| VPP                 |  ❌  |  ✅  |
 | VyOS                |  ✅  |  ✅[❗](caveats-vyos)  |
 
 **Note:**
@@ -195,6 +199,7 @@ Ansible playbooks included with **netlab** can deploy and collect device configu
 | Operating system      | Deploy<br>configuration | Collect<br> configuration | Configurable<br>save to startup |
 | --------------------- |:--:|:--:|:--:|
 | Arista EOS            | ✅ | ✅ |
+| Arrcus ArcOS [❗](caveats-arcos) | ✅ | ✅ |
 | Aruba AOS-CX          | ✅ | ✅ |
 | Cisco ASAv            | ✅ | ✅ |
 | Cisco IOS/IOS XE[^18v]| ✅ [❗](cisco-ios-ssh) | ✅ |
@@ -216,6 +221,7 @@ Ansible playbooks included with **netlab** can deploy and collect device configu
 | Nokia SR OS[^SROS]    | ✅ | ✅ |
 | OpenBSD               | ✅ | ❌  |
 | Sonic                 | ✅ | ✅ |
+| VPP FD.io             | ✅ | ❌  | 
 | VyOS                  | ✅ | ✅ |
 
 **Note:** *netlab* can deploy daemon configurations, but cannot collect them. Use the **netlab initial -o** command to create daemon configuration files in a custom directory.
@@ -233,6 +239,9 @@ Ansible playbooks included with **netlab** can deploy and collect device configu
 (platform-config-mode)=
 _netlab_ uses Ansible playbooks and device-specific task lists to deploy device configuration snippets onto most devices, with these notable exceptions:
 
+:::{table}
+:class: table-wrap
+
 | Device | Provider | Configuration deployment method |
 |--------|----------|---------------------------------|
 | bird   | clab     | **bash** scripts or daemon configuration files[^BBS] |
@@ -241,6 +250,9 @@ _netlab_ uses Ansible playbooks and device-specific task lists to deploy device 
 | Junos cRPD | clab | **bash** scripts[^cRBS] |
 | KinD   | clab     | **bash** scripts copied into and executed in containers |
 | linux  | clab     | host- or container-side **bash** scripts[^LBS] |
+| Sonic (containerlab) | clab | **bash** or **vtysh** scripts[^FRRBV] over **docker exec** |
+| vpp    | clab     | **bash** scripts, node configuration files, and VPP CLI configuration files[^VPPC] |
+:::
 
 [^FRRBV]: Configurations starting with a *shebang* are assumed to be Linux scripts; all other configurations are assumed to be **vtysh** scripts and get a `#!/usr/bin/vtysh -f` shebang prepended to them.
 
@@ -249,6 +261,8 @@ _netlab_ uses Ansible playbooks and device-specific task lists to deploy device 
 [^BBS]: Initial device configurations, VLANs, and link aggregation are configured with **bash** scripts. All other features are configured with the BIRD configuration files.
 
 [^DBS]: Initial device configurations, VLANs, static routes, and link aggregation are configured with **bash** scripts. All other features are configured with the dnsmasq configuration files.
+
+[^VPPC]: Initial device configuration is deployed with **bash** scripts executed within the container. VPP **startup.conf** is deployed as a node configuration file. The VPP startup configuration loads `/etc/vpp/config/setup.vpp`, a generated VPP CLI configuration file; the initial script creates `/etc/vpp/config/clab-interfaces.vpp`. The container waits for **netlab initial** to finish before starting VPP.
 
 [^cRBS]: The configuration deployment uses a custom **bash** script that calls **cli** command to execute **load merge** followed by **commit**. The custom script is used as the *shebang* interpreter for the configuration snippets.
 
@@ -281,6 +295,7 @@ The following system-wide features are configured on supported network operating
 | Operating system      | Hostname | IPv4/IPv6<br>hosts |           LLDP            | IPv4<br>Loopback | IPv6<br>Loopback |
 | --------------------- | :------: | :--------: | :-----------------------: | :------------------------: | :------------------------: |
 | Arista EOS               | ✅  | ✅  | ✅  | ✅  | ✅  |
+| Arrcus ArcOS             | ✅  |  ❌  |  ❌  | ✅  | ✅  |
 | Aruba AOS-CX             | ✅  |  ❌  | ✅  | ✅  | ✅  |
 | Cisco ASAv               | ✅  | ✅  |  ❌  |  ❌  |  ❌  |
 | Cisco IOS/IOS XE[^18v]   | ✅  | ✅  | ✅  | ✅  | ✅  |
@@ -303,6 +318,7 @@ The following system-wide features are configured on supported network operating
 | Nokia SR OS[^SROS]       | ✅  | ✅  | ✅  | ✅  | ✅  |
 | OpenBSD                  | ✅  | ✅  |  ❌  | ✅  | ✅  |
 | Sonic                    | ✅  | ✅  |  ❌  | ✅  | ✅  |
+| Sonic (containerlab)     | ✅  | ✅  |  ❌  | ✅  | ✅  |
 | VyOS                     | ✅  | ✅  | ✅  | ✅  | ✅  |
 
 [^HIF]: Some Linux-based devices can also use interface names in host names. See [/etc/hosts file on Linux](linux-hosts) for more details.
@@ -313,6 +329,7 @@ The following interface parameters are configured on supported network operating
 | Operating system      | Interface<br />description | Interface<br />bandwidth | MTU | Additional<br />loopbacks
 | --------------------- |:---:|:---:|:---:|:---:|
 | Arista EOS            | ✅  | ✅  | ✅  | ✅  |
+| Arrcus ArcOS          |  ❌  |  ❌  | ✅  | ✅  |
 | Aruba AOS-CX          | ✅  |  ❌  | ✅  | ✅  |
 | Cisco ASAv            | ✅  |  ❌  | ✅  |  ❌  |
 | Cisco IOSv/IOSvL2     | ✅  | ✅  | ✅  | ✅  |
@@ -335,6 +352,7 @@ The following interface parameters are configured on supported network operating
 | Nokia SR OS[^SROS]    | ✅  |  ❌  | ✅  | ✅  |
 | OpenBSD               | ✅  |  ❌  | ✅  |  ❌  |
 | Sonic                 | ✅  | ✅  | ✅  | ✅  |
+| Sonic (containerlab)  | ✅  | ✅  | ✅  | ✅  |
 | VyOS                  | ✅  |  ❌  | ✅  | ✅  |
 
 (platform-initial-addresses)=
@@ -343,6 +361,7 @@ The following interface addresses are supported on various platforms; most daemo
 | Operating system      | IPv4<br />addresses | IPv6<br />addresses | Unnumbered<br />IPv4 interfaces | Configurable<br>IPv6 RA |
 | --------------------- | :-: | :-: | :-: | :-: |
 | Arista EOS            | ✅  | ✅  | ✅  | ✅  |
+| Arrcus ArcOS          | ✅  | ✅  |  ❌  |  ❌  |
 | Aruba AOS-CX          | ✅  | ✅  | ✅  |  ❌  |
 | Cisco ASAv            | ✅  | ✅  |  ❌  |  ❌  |
 | Cisco IOSv/IOSvL2     | ✅  | ✅  |  ❌  | ✅  |
@@ -366,6 +385,7 @@ The following interface addresses are supported on various platforms; most daemo
 | Nokia SR OS[^SROS]    | ✅  | ✅  | ✅  |  ❌  |
 | OpenBSD               | ✅  | ✅  |  ❌  |  ❌  |
 | Sonic                 | ✅  | ✅  | ✅  |  ❌  |
+| VPP                   | ✅  | ✅  | ✅  | ✅  |
 | VyOS                  | ✅  | ✅  | ✅  |  ❌  |
 
 ```{tip}
@@ -393,6 +413,7 @@ Routing protocol [configuration modules](module-reference.md) are supported on t
 | Operating system      | [OSPF](module/ospf.md) | [IS-IS](module/isis.md) | [EIGRP](module/eigrp.md) | [BGP](module/bgp.md) | [RIPv2/ng](module/ripv2.md)
 | --------------------- | :--: | :--: | :--: | :--: | :--: |
 | Arista EOS            | ✅   |  ✅  |   ❌  |  ✅  |  ✅  |
+| Arrcus ArcOS [❗](caveats-arcos) | ✅ | ✅ | ❌ | ✅ | ❌ |
 | Aruba AOS-CX          | ✅   |  ❌   |   ❌  |  ✅  |   ❌  |
 | BIRD Internet Routing Daemon | ✅ [❗](caveats-bird) | ❌ | ❌ | ✅ [❗](caveats-bird) | ❌ |
 | Cisco ASAv            | ✅ [❗](caveats-asav) | ✅ [❗](caveats-asav) | ❌ | ✅ | ❌ |
@@ -413,6 +434,7 @@ Routing protocol [configuration modules](module-reference.md) are supported on t
 | Nokia SR OS[^SROS]    | ✅   |  ✅   |   ❌  | ✅  | ✅  |
 | OpenBSD               | ✅   |   ❌   |   ❌  | ✅   | ✅   |
 | Sonic                 |  ❌   |   ❌   |   ❌  | ✅  |   ❌  |
+| Sonic (containerlab)  | ✅   |  ✅   |   ❌  | ✅  |  ✅  |
 | VyOS                  | ✅   |  ✅   |   ❌  | ✅  |   ❌  |
 
 These devices support additional control-plane protocols or BGP address families:
@@ -420,6 +442,7 @@ These devices support additional control-plane protocols or BGP address families
 | Operating system | [BFD](module/bfd.md) | [EVPN](module/evpn.md) | [MPLS/VPN](module/mpls.md) | [FHRP](module/gateway.md) |
 | --------------------- | :-: | :-: | :-: | :-: |
 | Arista EOS            | ✅  | ✅  | ✅  | ✅  |
+| Arrcus ArcOS [❗](caveats-arcos) | ✅  | ✅  | ✅  | ✅  |
 | Aruba AOS-CX          | ✅  | ✅  | ✅  | ✅  |
 | BIRD                  |  ❌  | ✅  |  ❌  | ✅  |
 | Cisco IOS XE[^XE]     | ✅  | ✅  | ✅  | ✅  |
@@ -441,6 +464,7 @@ These devices support additional control-plane protocols or BGP address families
 | Mikrotik RouterOS 7   | ✅  |  ❌  | ✅  |  ❌  |
 | Nokia SR Linux        | ✅  | ✅  | ✅  | ✅  |
 | Nokia SR OS[^SROS]    | ✅  | ✅  | ✅  | ✅  |
+| Sonic (containerlab)  | ✅  | ✅  | ✅  | ✅  |
 | VyOS                  | ✅  | ✅  | ✅  |  ❌  |
 
 **Notes:**
@@ -452,6 +476,7 @@ The layer-2 control plane [configuration modules](module-reference.md) are suppo
 | Operating system          | [Spanning<br>Tree Protocol](module/stp.md) | [Link Aggregation<br>Groups](module/lag.md) |
 | ------------------------- |:--:|:--:|
 | Arista EOS                | ✅ | ✅ |
+| Arrcus ArcOS [❗](caveats-arcos) | ✅[❗](caveats-arcos) | ✅ |
 | Aruba CX                  | ✅ | ✅ |
 | BIRD                      | ❌  | ✅ |
 | Cumulus Linux             | ✅ | ✅ |
@@ -461,6 +486,7 @@ The layer-2 control plane [configuration modules](module-reference.md) are suppo
 | FRR                       | ✅ | ✅ |
 | IP Infusion OcNOS [❗](caveats-ocnos) | ✅ | ✅ |
 | Linux                     | ❌  | ✅ |
+| Sonic (containerlab)      | ❌  | ✅ |
 
 (platform-dataplane-support)=
 The data plane [configuration modules](module-reference.md) are supported on these devices[^NSM]:
@@ -468,6 +494,7 @@ The data plane [configuration modules](module-reference.md) are supported on the
 | Operating system      | [VLAN](module/vlan.md) | [VRF](module/vrf.md) | [VXLAN](module/vxlan.md) | [MPLS](module/mpls.md) | [SR-MPLS](module/sr-mpls.md) | [SRv6](module/srv6.md) |
 | --------------------- |:--:|:--:|:--:|:--:|:--:|:--:|
 | Arista EOS            | ✅ | ✅ | ✅ | ✅ | ✅ |  ❌ |
+| Arrcus ArcOS [❗](caveats-arcos) | ✅ | ✅ | ✅[❗](caveats-arcos) | ✅[❗](caveats-arcos) | ✅[❗](caveats-arcos) | ✅[❗](caveats-arcos) |
 | Aruba AOS-CX          | ✅ | ✅ |  ✅[❗](caveats-aruba) | [❗](caveats-aruba) | ❌ | ❌ |
 | BIRD                  | ✅ | ✅ | ✅ |  ❌ |  ❌ |  ❌ |
 | Cisco 8000v (IOS XR)  | ✅ | ✅ |  ❌ | ✅ | ✅ | ✅ |
@@ -494,6 +521,7 @@ The data plane [configuration modules](module-reference.md) are supported on the
 | Nokia SR Linux        | ✅ | ✅ | ✅ | ✅ | ✅ |  ❌ |
 | Nokia SR OS[^SROS]    | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | OpenBSD               | ✅ | ❌ | ✅ | ❌  | ❌ |
+| Sonic (containerlab)  | ✅ | ✅ | ✅ | ✅ | ✅ | ✅[❗](caveats-sonic-clab) |
 | VyOS                  | ✅ | ✅ | ✅ | ✅ |  ❌ |  ❌ |
 
 (platform-services-support)=
@@ -518,6 +546,7 @@ Core *netlab* functionality and all multi-protocol routing protocol configuratio
 | Operating system      | OSPFv3 | IS-IS MT | EIGRP<br />IPv6 AF | BGP<br />IPv6 AF | SR-MPLS |
 | --------------------- |:--:|:--:|:--:|:--:|:--:|
 | Arista EOS            | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Arrcus ArcOS          | ✅ | ❌[❗](caveats-arcos) | ❌ | ✅ | ❌ |
 | Aruba AOS-CX          | ✅ | ❌ | ❌ | ✅ | ❌ |
 | BIRD                  | ✅ | ❌ | ❌ | ✅ | ❌ |
 | Cisco ASAv            | ❌ | ✅ | ❌ | ✅ | ❌ |
@@ -538,6 +567,7 @@ Core *netlab* functionality and all multi-protocol routing protocol configuratio
 | Nokia SR OS[^SROS]    | ✅ | ✅ | ❌ | ✅ | ✅ |
 | OpenBSD               | ✅ | ❌ | ❌ | ✅ | ❌ |
 | Sonic                 |  ❌ | ❌ | ❌ | ✅ | ❌ |
+| Sonic (containerlab)  | ✅ | ✅ | ❌ | ✅ | ✅ |
 | VyOS                  | ✅ | ✅ | ❌ | ✅ | ❌ |
 
 (platform-unknown)=

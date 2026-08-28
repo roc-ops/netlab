@@ -55,20 +55,46 @@ nodes:
 * IPv6 BFD for IS-IS cannot be enabled on individual interfaces.  If you set **isis.bfd.ipv6** to *True*, BFD is enabled on all IS-IS interfaces.
 * Arista EOS virtual machines and containers use [proprietary control-plane messages to indicate the loss of Ethernet line protocol](https://blog.ipspace.net/2025/03/arista-spooky-action-distance/). Set the **netlab_phy_control** node variable to *False* to disable this functionality.
 * Device configurations that contain `no lldp transmit` or `no lldp receive` configuration command trigger configuration reload failures due to an Arista EOS bug ([more details](https://github.com/ipspace/netlab/issues/2577)). These commands are thus automatically removed from collected device configurations.
+* Arista EOS uses per-protocol Segment Routing Global Blocks. If you run SR-MPLS with OSPFv2 and IS-IS on the same device, the SRGB specified in the lab topology is applied to IS-IS and not to OSPFv2.
+
+GRE tunnel caveats:
+
+* OSPFv2 routing process does not use routes reachable over tunnel interfaces unless the **tunnel routes** parameter is configured. _netlab_ enables OSPFv2 tunnel routes, as no other routing protocol has a similar limitation, and Arista EOS documentation claims it's enabled by default (which is not the case).
+* IS-IS does not work over GRE tunnels
+* Arista cEOS might forward multiple copies of the packets received over GRE tunnels
 
 (caveats-arcos)=
 ## Arrcus ArcOS
 
-* Config deployment uses Ansible's **docker** connection plugin (running `confd_cli` directly inside the container), not `network_cli`. The official `arrcus.arcos` Ansible collection (Galaxy, versions 2.0.13-2.0.18 checked -- the full set published as of this writing) is the project-recommended `network_cli` model per its own documentation, but every version hangs against this ArcOS build: its cliconf plugin sends `arcos_cli` and `config terminal` as its first commands, both of which this platform's `confd_cli` rejects with a syntax error. Switch `ansible_connection`/`ansible_network_os` back to the commented-out `network_cli` block in `netsim/devices/arcos.yml` once a working collection version ships.
-* The `arcos:8.2.1A.P2` container image's baked-in startup configuration fails to load (it tries to delete the built-in, non-deletable martian prefix-sets), so SSH/NETCONF/gNMI all boot disabled. *netlab* bootstraps management (enable SSH, change the factory-default admin-user password -- required before ArcOS will enable *any* interface, create an AAA login user) via a `netlab_start_exec`/`clab.exec` post-start command, before any Ansible connection is attempted.
-* Cross-vendor OSPF adjacencies against FRR probe nodes do not currently converge (they stall in `NEIGHBOR_EXSTART`) -- root-caused to a default veth MTU mismatch between the `arrcus_arcos` and `frr` containerlab kinds (8974 vs 1500); ArcOS's own `interface mtu` config leaf does not override whatever MTU value its OSPF process actually checks. ArcOS-to-ArcOS and per-VRF OSPF/ISIS/BGP all converge correctly.
-* EVPN symmetric IRB / L3VNI (`vrfs.<name>.evpn.transit_vni`) renders and commits cleanly but the control plane never originates a route-type-5 prefix, so it is not declared as supported; only the L2VNI / distributed-anycast-gateway EVPN form is.
-* VRF route-target import/export leaking between VRFs is not supported -- there is no RD/RT/L3VPN model on this image outside the (working) per-VLAN EVPN MAC-VRF and (non-functional) per-VRF symmetric-IRB forms above.
-* OSPFv2 area-interface authentication is advertised in the CLI help but rejected on commit for every value form tried.
-* `routing-policy` can only set standard BGP communities inline; there is no set-large-community or set-extended-community action.
-* BGP/OSPF/IS-IS redistribution only supports `static` as an import source -- `connected` has no addressable source instance for OpenConfig `table-connection` redistribution on this image.
-* SR-MPLS/LDP bring up the control plane only (sessions, FEC/label bindings, prefix-SIDs) -- the native container image has no kernel MPLS platform-labels, so label forwarding cannot be tested.
-* A protocol instance tag (`p1`, `i1`) is a global namespace across every `network-instance` on this ArcOS build, not scoped per network-instance -- a VRF's OSPF/IS-IS instance must use a tag distinct from the default instance's (or another VRF's) same-protocol instance.
+ArcOS is a commercial NOS; there is no public container image. See the [ArcOS installation
+notes](build-arcos) for the image, the first-boot bootstrap, the supported configuration modules,
+and validation. Configuration is deployed with a bash script executed within the ArcOS container.
+
+* Initial device configuration sets the ArcOS interface MTU to the lab topology layer-3 MTU
+  (**interface.mtu**) plus 26.
+* _netlab_ configures static routes and they are used for traffic forwarding, but the tested ArcOS
+  image does not report them in the OpenConfig RIB tree.
+* While _netlab_ configures SR-MPLS, MPLS/LDP, and SRv6, the dataplane does not work in the
+  container image.
+* BGP sessions come up roughly 70 seconds after the rest of the configuration; the BGP daemon
+  rejects session state changes until it has finished reading its boot-time configuration. The
+  integration tests declare that wait. OSPF and IS-IS are not affected.
+* An OSPF ABR summarizes loopback host routes with the wrong prefix length, so a loopback placed in
+  a non-backbone area is not reachable from other areas. Loopbacks in area 0 and all inter-area
+  transit prefixes are unaffected.
+* IS-IS IPv6 is single-topology; the tested image has no multi-topology (RFC 5120) knob. Devices
+  running multi-topology IS-IS -- which is how _netlab_ configures every other device -- will not
+  install ArcOS IPv6 routes, so IPv6 IS-IS works only in an all-ArcOS IS-IS domain. IPv4 IS-IS
+  interoperates normally.
+* ArcOS computes the IPv4 VRRPv3 checksum over the IPv4 pseudo-header and has no knob to disable
+  it, while _netlab_ configures every other device the other way, so IPv4 VRRP does not interoperate
+  with other _netlab_ devices. A single ArcOS first-hop router works. IPv6 VRRP is unaffected.
+* With static VXLAN flooding, the container image withdraws the head-end-replication entry shortly
+  after programming it, so an ArcOS VTEP cannot originate BUM traffic (receiving works). Use
+  `vxlan.flooding: evpn`.
+* A discard (blackhole) static route pointing to a directly-connected host is displaced by the
+  connected route once that host's neighbor entry becomes reachable. Discard routes for prefixes
+  that are not directly connected work normally.
 
 (caveats-aruba)=
 ## Aruba AOS-CX
@@ -342,6 +368,12 @@ Netlab enables VRRPv3 by default on Dell OS10, overriding any platform defaults.
 
 * You have to build the *dnsmasq* container image with the **netlab clab build dnsmasq** command.
 
+(caveats-vpp)=
+## VPP (Vector Packet Processor)
+
+* You must [build the VPP container image](build-vpp) with the **netlab clab build vpp** command.
+* VPP can use FRR or BIRD control plane. [More details](vpp-control-plane).
+
 (caveats-exos)=
 ## Extreme Networks EXOS
 
@@ -471,6 +503,7 @@ ansible_httpapi_port: 80
 * Junos configuration template configures BFD timers within routing protocol configuration, not on individual interfaces
 * Junos does not disable the default BGP address family on a BGP neighbor until another AF is configured.
 * IS-IS NSAP is configured on the loopback interface for the global IS-IS instance and with the protocol **net** parameter in VRF IS-IS instances.
+* OSPFv3 over a GRE tunnel signals interface MTU value of `0` on *DBD* packets. If you need to interoperate with other devices/vendors, you need to ignore the MTU mismatch on the peer device.
 
 Implementation limitations in import/export route filters (reported as errors that can be disabled with topology settings):
 
@@ -670,16 +703,25 @@ See also [](caveats-sros) caveats for further details.
 * _netlab_ RIPv2/RIPng template implements route redistribution, but only for static and connected prefixes
 * The device role on nodes with a loopback interface is automatically changed to **router** (contrary to most other network devices, OpenBSD does not allow you to reach non-connected IP addresses unless the IPv4/IPv6 forwarding is enabled).
 
-(caveats-sonic)=
-## Sonic
+(caveats-sonic-vm)=
+## SONiC Virtual Machine
 
-* Sonic implementation was tested with Azure sonic-vs VM image (release 2023-11) with FRR running in a container. Other Sonic distributions might use different approaches that would require significant modifications to the configuration deployment process.
-* BGP is the only routing protocol running on Azure Sonic. The choice is hardcoded in FRR compilation flags.
-* You cannot use IBGP as there's no IGP protocol to resolve IBGP next hops, unless you believe in running IBGP over EBGP.
-* The Azure Sonic VM image has to be started with a preconfigured BGP AS number (specified in **config_db.json**); otherwise, it does not start the FRR container. That BGP process is removed during the initial BGP configuration and replaced with the actual BGP AS number specified in the lab topology.
-* _netlab_ configures BGP on Sonic through vtysh, not through **config_db**.
+* SONiC implementation was tested with Azure `sonic-vs` VM image (release 2023-11) with FRR running in a container. Other SONiC distributions might use different approaches that would require significant modifications to the configuration deployment process.
+* BGP is the only routing protocol running on Azure SONiC. The choice is hardcoded in FRR compilation flags.
+* You cannot use IBGP, as there's no IGP protocol to resolve IBGP next hops, unless you believe in running IBGP over EBGP.
+* The Azure SONiC VM image has to be started with a preconfigured BGP AS number (specified in **config_db.json**); otherwise, it does not start the FRR container. That BGP process is removed during the initial BGP configuration and replaced with the actual BGP AS number specified in the lab topology.
+* _netlab_ configures BGP on SONiC through vtysh, not through **config_db**.
 
 (caveats-sonic-clab)=
+## SONiC Container
+
+The `sonic` device also runs under *containerlab* with the community `docker-sonic-vs` image; see [](build-sonic-container) for how to obtain it and how the two deployments differ.
+
+* Configuration is deployed with **docker exec** commands, not over an SSH session.
+* `docker-sonic-vs` ships `sshd` but does not start it.
+* `srv6` is control-plane and kernel-plane only: the locator and End/End.X SIDs are advertised in the IS-IS LSDB and installed as kernel `seg6local` routes, but the end-to-end SRv6 datapath does not resolve -- the same open item as FRR/IS-IS SRv6 on other platforms.
+
+(caveats-sonic-clab-device)=
 ## Sonic (containerlab)
 
 A separate device (`sonic_clab`, parent `sonic`) for the community `docker-sonic-vs` image
@@ -736,7 +778,6 @@ It looks like the official VyOS container is not updated as part of the daily bu
 Other VyOS caveats:
 
 * VyOS configuration template configures BFD timers only at the global level
-* Multi-topology IS-IS (assumed by the [IS-IS configuration module](module-isis)) cannot be configured with VyOS IS-IS CLI ([bug report](https://vyos.dev/T6332)).
 * VyOS containers need host kernel modules (drivers) to implement the data-plane functionality of _vrf_, _mpls_, and _vxlan_ netlab modules. The kernel modules are automatically loaded (when available) during the **netlab up** processing.
 * VyOS containers cannot deal with min/max MTU sizes on dummy Ethernet interfaces used to implement stub networks. Stub networks in containers are implemented as **dum** interfaces.
 * VRF and VXLAN kernel modules are usually bundled with a Linux distribution. If your Ubuntu distribution does not include the MPLS drivers, try installing them with `sudo apt install linux-generic`.

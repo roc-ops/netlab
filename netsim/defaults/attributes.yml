@@ -53,6 +53,7 @@ link:                       # Global link attributes
   disable: bool
   shutdown: bool            # Shut down then interface during the initial configuration
   name: str
+  linkid: id
   prefix:
     type: dict
     _keys:
@@ -96,6 +97,7 @@ interface:                  # Interface (node-to-link attachment) attributes
   ipv6: { type: ipv6, use: interface }
   ifindex: int
   ifname: str
+  linkid: id
 
 node_extra_ns: [ providers, tools, outputs ]
 
@@ -206,6 +208,7 @@ _v_entry:                   # Validation entry
     _subtype: device
   exec: _v_option
   show: _v_option
+  ansible: _v_option
   config:
     template: str
     variable: dict
@@ -229,7 +232,7 @@ _v_option:
     expression to evaluate.
   type: dict
   _alt_types: [ str ]
-  _keytype: device
+  _keytype: { type: device, include_templates: true }
 
 _r_import:
   _description: |
