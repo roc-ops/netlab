@@ -162,6 +162,14 @@ features:
     priority: False
     password: False
     timers: False
+  isis:
+    # Only what was verified by commit check against a real DNOS IS-IS instance.
+    circuit_type: True          # per-interface "level level-N" commits
+    import: False               # no redistribution into IS-IS in this template
+    unnumbered:                 # neither implemented nor tested here
+      ipv4: False
+      ipv6: False
+      network: False
   bgp:
     ipv4: True
     ipv6: True

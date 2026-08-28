@@ -12,6 +12,10 @@
 # Adjacencies need 1-2 minutes after the commit; an empty neighbour table read straight after
 # "netlab up" is not a failure.
 provider: clab
+
+# Standing rule: every netlab topology we create opts in to the Nautobot sync.
+# It is opt-in per lab and silent when absent, which is exactly how it drifts.
+defaults.nautobot_sync: true
 module: [ ospf, bgp ]
 
 nodes:

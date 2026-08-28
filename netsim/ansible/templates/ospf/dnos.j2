@@ -113,13 +113,16 @@ protocols
               netlab_dnos_ospf_instance: netlab
 
     Renaming also brings the cross-instance rules into play on a box where they did not apply
-    before -- router-id agreement, distinct distances, and one instance per interface:
+    before -- router-id agreement, distinct distances, and one instance per ROUTED interface:
 
         ERROR: Unable to set interface 'ge100-0/0/1' under OSPF instance netlab area
                '0.0.0.0'. Interface attached to OSPF instance ospf area '0.0.0.0'.
 
-    -- which is the right outcome anyway: it refuses to move a live interface out of the
-    production IGP. #}
+    -- which is the right outcome anyway: it refuses to move a live routed interface out of the
+    production IGP. A LOOPBACK is exempt: a second instance may take one that another instance
+    already has (verified with a matching router-id and distinct distances, so nothing else
+    masked it). IS-IS behaves identically -- see isis/dnos.j2, where it was measured -- so this
+    is a DNOS rule about interface kinds, not something specific to OSPF. #}
 {%   set _inst = netlab_dnos_ospf_instance|default('ospf') %}
     instance {{ _inst }}
 {%   if _own %}

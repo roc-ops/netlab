@@ -1,0 +1,69 @@
+# DNOS IS-IS against PHYSICAL hardware -- the external provider, and the two things that are
+# only obvious after they have refused a commit.
+#
+# netlab never creates or destroys these nodes. It renders configuration and pushes it to a box
+# that is already running, and by default it stops after "commit check" and discards the
+# candidate (see netsim/ansible/tasks/deploy-config/dnos.yml). Committing for real is an explicit
+# opt-in, and on a box carrying someone else's traffic it should stay that way until a dry run
+# has been read.
+#
+#     netlab create && netlab initial          # renders, then dry-runs against the box
+#
+# ---------------------------------------------------------------------------------------------
+# 1. PIN isis.net TO THE BOX'S OWN SYSTEM ID.
+#
+# DNOS requires every IS-IS instance on a device to share ONE system id. The lab boxes already
+# run an operator instance called CORE, so netlab's instance has to match it -- and netlab
+# cannot know the value: it plans its own from the node id. Without the pin below:
+#
+#     ERROR: System ID must be the same for all networks in all ISIS instances.
+#
+# Read the real value off the box first:
+#
+#     show config protocols isis instance CORE
+#       -> iso-network 49.0001.1920.0000.5000.00
+#                      ^^^^^^^ area   ^^^^^^^^^^^^^^ system id (the half that must match)
+#
+# The AREA may differ from the operator's; only the system id has to agree. Keep netlab's own
+# area unless you have a reason not to.
+#
+# ---------------------------------------------------------------------------------------------
+# 2. GIVE netlab PORTS THE OPERATOR'S IS-IS DOES NOT ALREADY HOLD.
+#
+# A routed interface may be in only ONE IS-IS instance (a loopback may be in several):
+#
+#     ERROR: Interface 'ge10-0/0/5' can't be enabled on more than one IS-IS instance.
+#
+# netlab names hardware interfaces ge10-0/0/{ifindex} starting at 1, so link 1 is ge10-0/0/1,
+# link 5 is ge10-0/0/5, and so on. On RNS72XC, CORE already holds ge10-0/0/5 and ge10-0/0/20
+# (plus bundle-5.10, ge100-0/0/64.10, ge100-0/0/70.20 and lo0), so a topology that grows to five
+# links collides with the production IGP even though a one-link topology is fine. Check with
+# "show config protocols isis instance CORE" before adding links, and use the link "interfaces"
+# attribute to place netlab on ports you have actually been given.
+#
+# The system loopback is deliberately NOT put into netlab's instance on an external node: it is
+# the operator's, and it anchors their router-id and prefix-SID. That is why no lo0 appears in
+# the rendered IS-IS config here.
+provider: external
+module: [ isis ]
+
+defaults.nautobot_sync: true
+
+nodes:
+  RNS72XC:
+    device: dnos
+    # The box's OWN system id -- read it with "show config protocols isis instance CORE".
+    isis.net: 49.0001.1920.0000.5000.00
+    # netlab pushes to this address; the deploy transport is ssh/scp on port 22.
+    mgmt.ipv4: 10.22.64.111
+
+  # The far end of the netlab-managed link. Replace with the real neighbour, or drop this node
+  # and the link if you only want to validate what netlab would push to the 72XC.
+  RNS53DX:
+    device: dnos
+    isis.net: 49.0001.1920.0000.5300.00
+    mgmt.ipv4: 10.22.64.110
+
+links:
+- RNS72XC:
+  RNS53DX:

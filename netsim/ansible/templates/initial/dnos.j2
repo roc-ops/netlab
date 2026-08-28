@@ -12,6 +12,12 @@
    without a flag: the netlab "interfaces" list only ever holds links from the topology, i.e.
    ports that were explicitly given to netlab. #}
 {% import "dnos.macro.j2" as dn with context %}
+{#  NOTE THE DEFAULT: False here, True in ospf/isis/bgp. The halves disagree, and only the
+    external provider setting netlab_manage_identity explicitly on every node it augments keeps
+    them from ever being read. If that ever stops happening, this file withholds the hostname and
+    loopback while the IGP templates still believe netlab owns the node -- identity withheld,
+    ownership assumed. Left as it is because changing either half silently changes what gets
+    pushed to hardware; recorded so the disagreement is a decision rather than a surprise. #}
 {% if netlab_manage_identity|default(False) %}
 system
   name {{ inventory_hostname }}
