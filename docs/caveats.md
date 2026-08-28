@@ -56,6 +56,20 @@ nodes:
 * Arista EOS virtual machines and containers use [proprietary control-plane messages to indicate the loss of Ethernet line protocol](https://blog.ipspace.net/2025/03/arista-spooky-action-distance/). Set the **netlab_phy_control** node variable to *False* to disable this functionality.
 * Device configurations that contain `no lldp transmit` or `no lldp receive` configuration command trigger configuration reload failures due to an Arista EOS bug ([more details](https://github.com/ipspace/netlab/issues/2577)). These commands are thus automatically removed from collected device configurations.
 
+(caveats-arcos)=
+## Arrcus ArcOS
+
+* Config deployment uses Ansible's **docker** connection plugin (running `confd_cli` directly inside the container), not `network_cli`. The official `arrcus.arcos` Ansible collection (Galaxy, versions 2.0.13-2.0.18 checked -- the full set published as of this writing) is the project-recommended `network_cli` model per its own documentation, but every version hangs against this ArcOS build: its cliconf plugin sends `arcos_cli` and `config terminal` as its first commands, both of which this platform's `confd_cli` rejects with a syntax error. Switch `ansible_connection`/`ansible_network_os` back to the commented-out `network_cli` block in `netsim/devices/arcos.yml` once a working collection version ships.
+* The `arcos:8.2.1A.P2` container image's baked-in startup configuration fails to load (it tries to delete the built-in, non-deletable martian prefix-sets), so SSH/NETCONF/gNMI all boot disabled. *netlab* bootstraps management (enable SSH, change the factory-default admin-user password -- required before ArcOS will enable *any* interface, create an AAA login user) via a `netlab_start_exec`/`clab.exec` post-start command, before any Ansible connection is attempted.
+* Cross-vendor OSPF adjacencies against FRR probe nodes do not currently converge (they stall in `NEIGHBOR_EXSTART`) -- root-caused to a default veth MTU mismatch between the `arrcus_arcos` and `frr` containerlab kinds (8974 vs 1500); ArcOS's own `interface mtu` config leaf does not override whatever MTU value its OSPF process actually checks. ArcOS-to-ArcOS and per-VRF OSPF/ISIS/BGP all converge correctly.
+* EVPN symmetric IRB / L3VNI (`vrfs.<name>.evpn.transit_vni`) renders and commits cleanly but the control plane never originates a route-type-5 prefix, so it is not declared as supported; only the L2VNI / distributed-anycast-gateway EVPN form is.
+* VRF route-target import/export leaking between VRFs is not supported -- there is no RD/RT/L3VPN model on this image outside the (working) per-VLAN EVPN MAC-VRF and (non-functional) per-VRF symmetric-IRB forms above.
+* OSPFv2 area-interface authentication is advertised in the CLI help but rejected on commit for every value form tried.
+* `routing-policy` can only set standard BGP communities inline; there is no set-large-community or set-extended-community action.
+* BGP/OSPF/IS-IS redistribution only supports `static` as an import source -- `connected` has no addressable source instance for OpenConfig `table-connection` redistribution on this image.
+* SR-MPLS/LDP bring up the control plane only (sessions, FEC/label bindings, prefix-SIDs) -- the native container image has no kernel MPLS platform-labels, so label forwarding cannot be tested.
+* A protocol instance tag (`p1`, `i1`) is a global namespace across every `network-instance` on this ArcOS build, not scoped per network-instance -- a VRF's OSPF/IS-IS instance must use a tag distinct from the default instance's (or another VRF's) same-protocol instance.
+
 (caveats-aruba)=
 ## Aruba AOS-CX
 
@@ -436,6 +450,19 @@ ansible_httpapi_port: 80
 * An OSPFv3 ABR running FRR release 10.3 does not originate summary external routes from NSSA areas
 * As of FRRouting release 10.6.0, the FRR implementation of EVPN for VXLAN-over-IPv6 is incompatible with the Arista EOS implementation due to different encodings of the PMSI_TUNNEL_ATTRIBUTE.
 
+(caveats-ocnos)=
+## IP Infusion OcNOS
+
+* OcNOS ships a commercial NOS image; there is no public Vagrant/Containerlab box. Obtain the `vrnetlab/ipinfusion_ocnos` container image (or an equivalent OcNOS VM) from IP Infusion and build/import it yourself.
+* OcNOS's CLI (`cmlsh`) is a restricted shell with **no non-interactive exec mode** -- a plain `ssh device 'show ...'` fails with `Try 'cmlsh --help'`. Configuration deploy and collection use the **ipinfusion.ocnos** Ansible collection (`ocnos_config` / `ocnos_facts`) over `ansible_connection: network_cli`, which drives `cmlsh` interactively through dedicated cliconf/terminal plugins. Install the collection with `ansible-galaxy collection install ipinfusion.ocnos`.
+* Because of the `cmlsh` restriction above, *netlab*'s native device-side `netlab validate` (which issues `show` commands over non-interactive SSH) does not work directly against an OcNOS node. Validate OcNOS topologies with the standard module test suites that check state from attached FRR/Linux probe nodes instead (for example `tests/integration/ospf/`, `tests/integration/bgp/`), or query the device with an ad hoc `ipinfusion.ocnos.ocnos_command` task.
+* An OSPF (v2 or v3) network-membership change on an already-running process (a new area or network added to an existing `router ospf`/`router ipv6 ospf`) makes OcNOS's `commit` return a non-empty informational notice (`Use "clear ip[v6] ospf process" command to take effect`). The `ocnos_config` Ansible module treats any non-empty commit response as a failure, which aborts the rest of that node's play -- any modules queued after `ospf` in the same **netlab initial** run (for example `isis`, `bgp`, `vrf`) are silently skipped for that node. Run **netlab initial** a second time after the first OSPF network/area change on a node; the second pass re-sends the now-unchanged OSPF config (no new membership, no notice) and lets the remaining modules deploy normally. This is a one-time cost per fresh OSPF network change, not a per-boot cost.
+* The main loopback interface name is `lo`; the kernel `lo` owns `127.0.0.1`, so *netlab*'s loopback address is configured as a `secondary` address. Additional *netlab* loopbacks become `loopback<N>` (OcNOS does not support `loopback0`).
+* VLANs use the Customer Bridge (VLAN-aware bridge) model: `bridge 1 protocol ieee vlan-bridge` + `vlan database`, with SVIs named `vlan1.<vlan-id>`.
+* Per-VRF OSPF uses a positional VRF name, not a `vrf` keyword: `router ospf <process-id> <vrf-name>`.
+* LACP aggregates are named `po<N>`; static (non-LACP) port channels are named `sa<N>`.
+* OSPFv3 is not supported inside a VRF: the `router ipv6 vrf ospf <name>` command commits and the interface area binding is accepted, but the process never actually attaches to the VRF (`show ipv6 ospf` reports zero areas indefinitely). This is a proven NSM-level gap, not a template limitation.
+
 (caveats-junos)=
 ## Common Junos caveats
 
@@ -651,6 +678,48 @@ See also [](caveats-sros) caveats for further details.
 * You cannot use IBGP as there's no IGP protocol to resolve IBGP next hops, unless you believe in running IBGP over EBGP.
 * The Azure Sonic VM image has to be started with a preconfigured BGP AS number (specified in **config_db.json**); otherwise, it does not start the FRR container. That BGP process is removed during the initial BGP configuration and replaced with the actual BGP AS number specified in the lab topology.
 * _netlab_ configures BGP on Sonic through vtysh, not through **config_db**.
+
+(caveats-sonic-clab)=
+## Sonic (containerlab)
+
+A separate device (`sonic_clab`, parent `sonic`) for the community `docker-sonic-vs` image
+running under *containerlab*, distinct from the `sonic` device above (which targets the
+Azure/libvirt SONiC VM). The two images have different internal architectures and are not
+interchangeable: `docker-sonic-vs` is a single monolithic container (FRR's `vtysh` runs
+directly in it), while the VM runs FRR inside a nested `bgp` sub-container.
+
+* You supply your own `docker-sonic-vs:latest` image (build it from the
+  [sonic-buildimage](https://github.com/sonic-net/sonic-buildimage) `docker-sonic-vs` target, or
+  pull a prebuilt one); *netlab* does not ship or distribute it.
+* Configuration is deployed over Ansible's built-in `docker` connection plugin (`docker exec`),
+  not `network_cli`: `docker-sonic-vs` has no cliconf-compatible CLI. The only SONiC cliconf
+  Ansible ships, `dellemc.enterprise_sonic`, targets Dell's licensed "Management Framework" CLI
+  (`sonic-cli`/klish) on Dell PowerSwitch hardware running Enterprise SONiC -- that CLI does not
+  exist on the community image (no `admin` user, no `sonic-cli`/`klish` binary anywhere in it).
+  This matches how *netlab* already drives the in-tree `frr` *containerlab* device and the
+  libvirt `sonic` device above (which has a full sshd) -- neither uses `network_cli` for this
+  vtysh-delegated render-then-push style of configuration, sshd or not.
+* `docker-sonic-vs` ships `sshd` and host keys but starts neither `sshd` nor a login user; the
+  initial configuration bootstraps both (`admin`/`YourPaSsWoRd`, matching the `sonic` device's
+  own credentials) purely for interactive access (`netlab connect`, ad-hoc troubleshooting) --
+  SSH plays no part in configuration deployment.
+* Most FRR daemons ship disabled in `/etc/frr/daemons` by default (to save resources); the
+  initial configuration enables the ones the configured modules need and restarts FRR once.
+* MPLS/SR-MPLS labs need a one-time host prerequisite before `netlab up`: `sudo modprobe
+  mpls_router mpls_iptunnel`. Once loaded, `/proc/sys/net/mpls/*` appears in every container's
+  network namespace (even already-running ones), giving a real kernel MPLS label FIB
+  (`ip -M route`), not just a control-plane proof.
+* Module support is broad and FRR-delegated (`ospf`, `bgp`, `isis`, `vrf`, `bfd`, `mpls`, `sr`,
+  `srv6`, `vxlan`, `evpn`, `evpn.multihoming`, `gateway`/`vrrp.version`, `ripv2`, `routing`,
+  `tunnel.gre`, `bgp.session`/`bgp.policy`/`bgp.originate`/`bgp.domain`/`ebgp.multihop`,
+  `ospf.areas`, both IPv4 and IPv6), including a real kernel MPLS label FIB and MPLS L3VPN
+  datapath, real kernel `seg6local` SRv6 routes, and a full EVPN-VXLAN symmetric-IRB (L3VNI)
+  datapath -- all live-verified; see the device's `tests/integration/platform/sonic_clab/`
+  topologies for the complete list and what each one checks.
+* Genuinely unsupported on this image (not just untested): DHCP relay/client (no
+  `dhcrelay`/`dhcp6relay` binary), real STP port-blocking (config-plane only, no `stpd`
+  daemon), and the `mlag.vtep` active-active EVPN datapath (config-plane renders correctly, but
+  there is no `mclagd`, so BGP never resolves a usable self-next-hop for the anycast VTEP).
 
 (caveats-vyos)=
 ## VyOS

@@ -1,0 +1,200 @@
+#!/bin/bash
+# netlab dhcp module -> ISC Kea DHCPv4/DHCPv6 config (runs INSIDE the kea container,
+# config_mode 'sh' -- see netsim/daemons/kea.yml). Renders netlab's computed
+# dhcp.pools into /etc/kea/kea-dhcp4.conf (and kea-dhcp6.conf when any pool carries an
+# ipv6 prefix), validates each, then reloads the running daemon(s) via the REST control
+# agent (falls back to a supervisord restart if the agent isn't up yet). Socket/logger/
+# hook paths match the image defaults baked in netsim/daemons/kea/Dockerfile, so the
+# control agent keeps working. A pool gets no "interface" binding when it's reached
+# through a relay (giaddr for v4, link-address for v6) -- Kea's normal relayed subnet
+# selection handles that on its own. But when kea itself has a directly-attached
+# interface on the pool's own subnet (no relay in between), Kea CANNOT select that
+# subnet for a client's link-local-sourced SOLICIT/DISCOVER without an explicit
+# "interface" binding on the subnet -- found live: a directly-attached v6 client kept
+# getting NoAddrsAvail/"Server could not select subnet for this client" until the
+# subnet6 entry got an explicit "interface". So: cross-reference each pool's prefix
+# against kea's own `interfaces` to detect direct attachment and add "interface" then.
+set -e
+
+cat > /etc/kea/kea-dhcp4.conf <<'KEACONF'
+{
+  "Dhcp4": {
+    "interfaces-config": { "interfaces": [
+{% for intf in interfaces|default([]) if intf.ifname != 'eth0' and intf.ipv4 is defined %}
+      "{{ intf.ifname }}"{{ "," if not loop.last }}
+{% endfor %}
+    ] },
+    "control-socket": {
+      "socket-type": "unix",
+      "socket-name": "/var/run/kea/kea4-ctrl-socket"
+    },
+    "hooks-libraries": [
+      { "library": "/usr/lib/x86_64-linux-gnu/kea/hooks/libdhcp_lease_cmds.so" },
+      { "library": "/usr/lib/x86_64-linux-gnu/kea/hooks/libdhcp_stat_cmds.so" }
+    ],
+    "lease-database": {
+      "type": "memfile",
+      "persist": true,
+      "name": "/var/lib/kea/kea-leases4.csv"
+    },
+    "valid-lifetime": 3600,
+    "renew-timer": 900,
+    "rebind-timer": 1800,
+    "loggers": [
+      { "name": "kea-dhcp4", "severity": "INFO",
+        "output_options": [ { "output": "stdout" } ] }
+    ],
+    "subnet4": [
+{% for pool in dhcp.pools|default([]) if 'ipv4' in pool %}
+{%   set pidx = loop.index %}
+{%   set outer_last = loop.last %}
+{%   set ns4 = namespace(direct_if=none) %}
+{%   set pool_net4 = pool.ipv4|ipaddr('network') %}
+{%   set pool_plen4 = pool.ipv4|ipaddr('prefix') %}
+{%   for intf in interfaces|default([]) if intf.ifname != 'eth0' and intf.ipv4 is defined %}
+{%     if (intf.ipv4|ipaddr(pool_plen4)|ipaddr('network')) == pool_net4 %}
+{%       set ns4.direct_if = intf.ifname %}
+{%     endif %}
+{%   endfor %}
+      {
+        "id": {{ pidx }},
+        "subnet": "{{ pool.ipv4 }}",
+        "comment": "{{ pool.name }}{{ ' (vrf ' + pool.vrf + ')' if pool.vrf is defined else '' }}",
+{%   if ns4.direct_if %}
+        "interface": "{{ ns4.direct_if }}",
+{%   endif %}
+        "pools": [ { "pool": "{{ pool.ipv4|ipaddr(1)|ipaddr('address') }} - {{ pool.ipv4|ipaddr(-2)|ipaddr('address') }}" } ],
+{%   if pool.gateway.ipv4 is defined %}
+        "option-data": [
+          { "name": "routers", "data": "{{ pool.gateway.ipv4|ipaddr('address') }}" }
+        ],
+{%   endif %}
+{%   if pool.excluded.ipv4 is defined %}
+{#     netlab excludes the static devices on the link (relays/routers): pin their
+       addresses to bogus reservations so the pool never hands them out -- the same
+       trick netlab's dnsmasq daemon template uses #}
+        "reservations": [
+{%     for xa in pool.excluded.ipv4 %}
+          { "hw-address": "ff:00:00:00:{{ '%02x'|format(pidx) }}:{{ '%02x'|format(loop.index) }}",
+            "ip-address": "{{ xa }}" }{{ "," if not loop.last }}
+{%     endfor %}
+        ],
+{%   endif %}
+{%   if pool.vrf is defined %}
+        "user-context": { "vrf": "{{ pool.vrf }}" }
+{%   else %}
+        "user-context": { }
+{%   endif %}
+      }{{ "," if not outer_last }}
+{% endfor %}
+    ]
+  }
+}
+KEACONF
+
+# validate before touching the running daemon
+kea-dhcp4 -t /etc/kea/kea-dhcp4.conf >/dev/null
+
+# reload via the control agent (wait for it after initial boot), else restart
+v4_reloaded=""
+for i in $(seq 1 15); do
+  out=$(curl -s -m 3 -X POST -H 'Content-Type: application/json' \
+        -d '{"command":"config-reload","service":["dhcp4"]}' http://127.0.0.1:8000/ 2>/dev/null) && \
+    echo "$out" | grep -q '"result": *0' && { echo "kea-dhcp4: config reloaded"; v4_reloaded=1; break; }
+  sleep 2
+done
+[ -n "$v4_reloaded" ] || { supervisorctl restart kea-dhcp4 && echo "kea-dhcp4: restarted (control agent unavailable)" || echo "kea-dhcp4: WARNING reload and restart both failed"; }
+
+{% if dhcp.pools|default([])|selectattr('ipv6','defined')|list|length > 0 %}
+# At least one pool carries an ipv6 prefix -- render + (re)load Dhcp6 too.
+cat > /etc/kea/kea-dhcp6.conf <<'KEACONF6'
+{
+  "Dhcp6": {
+{#   Unlike v4 (which uses raw/AF_PACKET sockets under "*" and so happily receives relayed
+     unicast regardless of destination address), Kea's v6 path binds plain UDP sockets that
+     only receive traffic addressed to the exact bound address -- "*" only gets you
+     link-local + multicast (ff02::1:2), fine for a directly-attached client's SOLICIT but
+     NOT for a relay's RELAY-FORW, which is unicast to this node's own global address. Fix:
+     bind explicitly to "<ifname>/<global-ipv6-address>" on every data interface (mgmt eth0
+     excluded). #}
+    "interfaces-config": { "interfaces": [
+{% for intf in interfaces|default([]) if intf.ifname != 'eth0' and intf.ipv6 is defined %}
+      "{{ intf.ifname }}/{{ intf.ipv6|ipaddr('address') }}"{{ "," if not loop.last }}
+{% endfor %}
+    ] },
+    "control-socket": {
+      "socket-type": "unix",
+      "socket-name": "/var/run/kea/kea6-ctrl-socket"
+    },
+    "hooks-libraries": [
+      { "library": "/usr/lib/x86_64-linux-gnu/kea/hooks/libdhcp_lease_cmds.so" },
+      { "library": "/usr/lib/x86_64-linux-gnu/kea/hooks/libdhcp_stat_cmds.so" }
+    ],
+    "lease-database": {
+      "type": "memfile",
+      "persist": true,
+      "name": "/var/lib/kea/kea-leases6.csv"
+    },
+    "valid-lifetime": 3600,
+    "renew-timer": 900,
+    "rebind-timer": 1800,
+    "loggers": [
+      { "name": "kea-dhcp6", "severity": "INFO",
+        "output_options": [ { "output": "stdout" } ] }
+    ],
+    "subnet6": [
+{% for pool in dhcp.pools|default([]) if 'ipv6' in pool %}
+{%   set pidx = loop.index %}
+{%   set outer_last = loop.last %}
+{%   set ns6 = namespace(direct_if=none) %}
+{%   set pool_net6 = pool.ipv6|ipaddr('network') %}
+{%   set pool_plen6 = pool.ipv6|ipaddr('prefix') %}
+{%   for intf in interfaces|default([]) if intf.ifname != 'eth0' and intf.ipv6 is defined %}
+{%     if (intf.ipv6|ipaddr(pool_plen6)|ipaddr('network')) == pool_net6 %}
+{%       set ns6.direct_if = intf.ifname %}
+{%     endif %}
+{%   endfor %}
+      {
+        "id": {{ pidx }},
+        "subnet": "{{ pool.ipv6 }}",
+        "comment": "{{ pool.name }}{{ ' (vrf ' + pool.vrf + ')' if pool.vrf is defined else '' }}",
+{%   if ns6.direct_if %}
+        "interface": "{{ ns6.direct_if }}",
+{%   endif %}
+{#     bounded range like netlab's own dnsmasq daemon template uses for v6 (a /64's full
+       range is impractically large to hand ipaddr(-2) the same way as v4) #}
+        "pools": [ { "pool": "{{ pool.ipv6|ipaddr(1)|ipaddr('address') }} - {{ pool.ipv6|ipaddr(1024)|ipaddr('address') }}" } ],
+{#     DHCPv6 has no "routers" option (IPv6 default gateway comes from RA, not DHCP) #}
+{%   if pool.excluded.ipv6 is defined %}
+{#     same bogus-identifier trick as v4, but v6 host reservations key off a DUID, not a
+       MAC -- fabricate a well-formed DUID-LL (type 3, hw-type 1 ethernet) per address #}
+        "reservations": [
+{%     for xa in pool.excluded.ipv6 %}
+          { "duid": "00:03:00:01:aa:bb:cc:00:{{ '%02x'|format(pidx) }}:{{ '%02x'|format(loop.index) }}",
+            "ip-addresses": [ "{{ xa }}" ] }{{ "," if not loop.last }}
+{%     endfor %}
+        ],
+{%   endif %}
+{%   if pool.vrf is defined %}
+        "user-context": { "vrf": "{{ pool.vrf }}" }
+{%   else %}
+        "user-context": { }
+{%   endif %}
+      }{{ "," if not outer_last }}
+{% endfor %}
+    ]
+  }
+}
+KEACONF6
+
+kea-dhcp6 -t /etc/kea/kea-dhcp6.conf >/dev/null
+
+v6_reloaded=""
+for i in $(seq 1 15); do
+  out=$(curl -s -m 3 -X POST -H 'Content-Type: application/json' \
+        -d '{"command":"config-reload","service":["dhcp6"]}' http://127.0.0.1:8000/ 2>/dev/null) && \
+    echo "$out" | grep -q '"result": *0' && { echo "kea-dhcp6: config reloaded"; v6_reloaded=1; break; }
+  sleep 2
+done
+[ -n "$v6_reloaded" ] || { supervisorctl restart kea-dhcp6 && echo "kea-dhcp6: restarted (control agent unavailable)" || echo "kea-dhcp6: WARNING reload and restart both failed"; }
+{% endif %}

@@ -1,12 +1,115 @@
 ---
-- name: Push Candidate Config
-  template:
-    src: '{{ config_template }}'
-    dest: '/tmp/.{{ inventory_hostname }}.txt'
+# ArcOS config deploy (issue #39) -- reached over Ansible's built-in 'docker' connection plugin
+# (ansible_connection: docker in netsim/devices/arcos.yml -> clab.group_vars), so 'template'/
+# 'shell' here already execute *inside* the node container -- no docker exec wrapping needed,
+# same pattern as netsim/devices/sonic_clab.yml and netsim/ansible/tasks/deploy-config/
+# sonic_clab.yml.
+#
+# LIVE-VERIFIED WORKING END TO END (2-node OSPF+BGP topology, multilab id 51): `netlab initial`
+# commits initial/ospf/bgp cleanly on both nodes ("Commit complete."), is idempotent on rerun
+# ("No modifications to commit."), and both protocols actually converge -- OSPF adjacency
+# reaches NEIGHBOR_FULL, BGP session reaches ESTABLISHED with prefixes exchanged both ways.
+# Confirmed via `show running-config` and confd operational-state paths, not just task rc=0.
+#
+# CHUNKED COMMITS: several ported module templates (vlan, vxlan, isis import, evpn) emit a
+# `#COMMIT` marker line -- confd rejects some constructs (a newly-created named list entry
+# referenced later in the SAME transaction, e.g. `vlan 10 name red` then a trunk-vlans
+# reference to it) unless each piece lands in its OWN commit first. This mirrors exactly what
+# the out-of-tree reference's docker-exec deploy task does (same awk split); ported here so any
+# module template can opt into it by emitting `#COMMIT` on its own line wherever a hard split is
+# required. Modules that never emit `#COMMIT` render as a single chunk == single commit, same as
+# before.
+#
+# CONNECTION-MODEL FINDINGS (full account -- see netsim/devices/arcos.yml's header comment for
+# the summary):
+#
+# 1. network_cli itself works fine against this ArcOS build: SSH auth as the bootstrap-created
+#    AAA user, terminal login, and the arrcus.arcos cliconf/terminal plugins all connect.
+#    ansible.netcommon.net_put (SCP over network_cli) stages files successfully.
+#
+# 2. arrcus.arcos.arcos_config -- the collection's own dedicated config-push module -- is
+#    broken against this ArcOS build, in every published version (2.0.13 through 2.0.18, the
+#    full set on Galaxy as of this writing -- confirmed by downloading and diffing each
+#    version's plugins/cliconf/arcos.py; all six are identical on this point). Its cliconf's
+#    edit_config() unconditionally sends `config {mode}` as its first command, where `mode` is
+#    one of the module's three allowed values: terminal (the default), shared, exclusive. All
+#    three produce a command this confd_cli rejects -- live-verified: `config terminal` ->
+#    "syntax error: expecting configuration | full-configuration | history | parser" (plain
+#    `config`, no argument, is the only valid form -- matches
+#    wiki/okf/arcos-8.5/netlab-bootstrap.md). No argument_spec value produces bare `config`, so
+#    arcos_config hangs (60s command timeout) on every invocation.
+#
+# 3. arrcus.arcos.arcos_command (whose run_commands() has no `config {mode}` wrapping) ALSO
+#    hangs, for two independently confirmed reasons: (a) every cliconf/terminal entry point
+#    unconditionally opens the session by sending `arcos_cli` as its first command -- a
+#    mode-switch that doesn't exist on this ArcOS build ("-------^ syntax error: expecting
+#    bash | cd | clear | ..."); (b) the terminal plugin's prompt regex (terminal_stdout_re) is
+#    missing `@` in its character class, so it never matches this platform's actual
+#    `user@host(config)#` prompt. Both confirmed by locally patching the installed collection
+#    (verified each fix in isolation and together), then fully reverting it to the pristine
+#    published state (diffed byte-identical to a pre-patch backup) -- even with both bugs
+#    patched, config push through Ansible's network_cli persistent connection still did not
+#    reliably complete in the available test window, so there's a third, unidentified issue.
+#    Two real, reproducible, worth-reporting-upstream bugs either way.
+#
+# 4. Manually replaying the device's own `config` / `load merge <path>` / `commit` / `end`
+#    sequence over a raw SSH session (bypassing Ansible entirely) succeeds instantly ("Commit
+#    complete.") -- so the rendered config, the CLI grammar, and the device are all sound. This
+#    task list drives that exact same sequence, just over `docker exec` (via the
+#    ansible_connection: docker plugin) instead of SSH -- the proven, out-of-tree deploy path,
+#    wired the ansible-native way instead of a hand-rolled `docker exec` shell script.
+#
+# 5. confd_cli returns rc 0 even on a `load merge` parse error -- scan output for
+#    Error:/Aborted:/syntax error and fail explicitly (same safeguard the out-of-tree reference
+#    uses).
+#
+# Once a working arrcus.arcos version ships (or a workaround for the third mismatch is found),
+# flip netsim/devices/arcos.yml's clab.group_vars back to the commented-out network_cli block
+# and this task list back to arrcus.arcos.arcos_command/arcos_config -- no template changes
+# needed, config_template rendering is identical either way.
+#
+# One-time management bootstrap (enabling ssh-server for interactive use, changing the
+# factory-default admin-user password so interfaces are even allowed to enable, and creating
+# the arcadmin AAA user) happens out-of-band via group_vars.netlab_start_exec in
+# netsim/devices/arcos.yml -- NOT here.
 
-- name: Apply candidate config
-  arrcus.arcos.arcos_config:
-    src: "/tmp/.{{ inventory_hostname }}.txt"
-    load_operation: merge
-    comment: "initial config pushed by netsim"
-    delete_src_file: true
+- name: Render candidate config on the controller
+  template:
+    src: "{{ config_template }}"
+    dest: "/tmp/netlab-{{ netsim_action }}.cfg"
+
+- name: "confd_cli: load merge + commit {{ netsim_action }} config (one commit per #COMMIT chunk)"
+  # Retries each chunk on "configuration database is locked by session none" -- a transient
+  # confd lock (live-observed shortly after the mgmt bootstrap's own confd_cli session on the
+  # same node; it clears within a few seconds on its own, same class of issue as the confd
+  # config-store lock OcNOS hits, see netlab/ocnos/unlock.py in the out-of-tree reference). Any
+  # other rejection (Error:/Aborted: for a real reason/syntax error) fails immediately -- do not
+  # retry those.
+  shell: |
+    set -o pipefail
+    SRC="/tmp/netlab-{{ netsim_action }}.cfg"
+    PFX="/tmp/netlab-{{ netsim_action }}.chunk."
+    MSG="{{ netsim_action }} configuration pushed by netlab"
+    rm -f "${PFX}"*
+    awk -v pfx="$PFX" 'BEGIN{n=0} /^#COMMIT/{n++; next} {print > sprintf("%s%02d", pfx, n)}' "$SRC"
+    for f in "${PFX}"*; do
+      [ -e "$f" ] || continue   # no chunks -> module rendered empty config, nothing to push
+      for i in $(seq 1 6); do
+        OUT=$(printf 'config\nload merge %s\ncommit comment "%s"\nend\n' "$f" "$MSG" \
+              | confd_cli -C -u admin 2>&1)
+        if printf '%s' "$OUT" | grep -qi 'is locked by session'; then
+          sleep 3
+          continue
+        fi
+        break
+      done
+      printf '%s\n' "$OUT"
+      if printf '%s' "$OUT" | grep -qiE 'Error:|Aborted:|syntax error'; then
+        exit 1
+      fi
+    done
+  args:
+    executable: /bin/bash
+  register: arcos_deploy
+  changed_when: "'Commit complete' in arcos_deploy.stdout"
+  failed_when: arcos_deploy.rc != 0

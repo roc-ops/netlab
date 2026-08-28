@@ -1,0 +1,58 @@
+{#
+  Casa CMTS IS-IS (RocContLab #64). Casa NSI Ch.10 (process) + Ch.9 (interface):
+    process:   router isis <tag> / net <nsap> / is-type / metric-style wide /
+               passive-interface <if> / address-family ipv6 unicast + multi-topology
+    interface: ip router isis <tag> (v4) / ipv6 router isis <tag> (v6) /
+               isis network point-to-point / isis metric / isis circuit-type / isis bfd
+  CASA DEVIATION: is-type / circuit-type use `level-2-only` (IOS uses `level-2`) — the
+  |replace below maps netlab's `level-2` to Casa's token (`level-1`/`level-1-2` unchanged;
+  `level-1-2` is left intact because it does not contain the `level-2` substring).
+  netlab model: node isis.{instance,net,type,af}; per-if l.isis.{network_type,type,metric,
+  cost,bfd.ipv4/ipv6,passive}.
+#}
+{% set istype = (isis.type|default('level-2'))|replace('level-2','level-2-only') %}
+{# ---- interface enablement + tuning ---- #}
+{% for l in netlab_interfaces|default([]) if 'isis' in l %}
+interface {{ l.ifname }}
+{%   if ('ipv4' in l) and 'ipv4' in isis.af %}
+  ip router isis {{ isis.instance }}
+{%   endif %}
+{%   if ('ipv6' in l) and 'ipv6' in isis.af %}
+  ipv6 router isis {{ isis.instance }}
+{%   endif %}
+{%   if l.isis.network_type|default('') == 'point-to-point' and l.type not in ['loopback','tunnel'] %}
+  isis network point-to-point
+{%   endif %}
+{%   if l.isis.type is defined %}
+  isis circuit-type {{ l.isis.type|replace('level-2','level-2-only') }}
+{%   endif %}
+{%   if l.isis.metric is defined or l.isis.cost is defined %}
+  isis metric {{ l.isis.metric|default(l.isis.cost) }}
+{%   endif %}
+{%   if l.isis.bfd.ipv4|default(False) or l.isis.bfd.ipv6|default(False) %}
+  isis bfd
+{%   endif %}
+{%   if l.isis_hello_padding|default(False) %}
+  isis hello padding
+{%   endif %}
+{%   if l.isis_priority is defined %}
+  isis priority {{ l.isis_priority }}
+{%   endif %}
+!
+{% endfor %}
+{# ---- process ---- #}
+router isis {{ isis.instance }}
+  net {{ isis.net }}
+  is-type {{ istype }}
+  metric-style wide
+  hostname dynamic
+  log-adjacency-changes
+{% for l in netlab_interfaces|default([]) if 'isis' in l and l.isis.passive|default(False) %}
+  passive-interface {{ l.ifname }}
+{% endfor %}
+{% if isis.af.ipv6 is defined %}
+  address-family ipv6 unicast
+    multi-topology
+  exit-address-family
+{% endif %}
+!

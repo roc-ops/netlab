@@ -1,0 +1,137 @@
+---
+message: |
+  Use this topology to test the 'kea' daemon device: an IOL relay forwards DHCP
+  requests from two IPv4 client subnets (one in VRF red, one in the global routing
+  table) and one IPv6 client subnet to a Kea server, verifying VRF-aware inter-VRF
+  relay + subnet selection (IPv4) and DHCPv6 pool rendering (IPv6) through a real
+  relay -- not a directly-attached server.
+
+  Use 'netlab validate' to check the leases on both the client and server side.
+
+defaults.sources.extra: [ ../wait_times.yml, ../warnings.yml ]
+
+provider: clab
+defaults.device: iol
+defaults.devices.iol.clab.image: vrnetlab/cisco_iol:17.18.02
+
+plugin: [ multilab ]
+defaults.multilab.id: 55
+
+vrfs:
+  red:
+
+nodes:
+  srv:
+    device: kea
+  r1:
+    module: [ dhcp, vrf ]
+    config: [ kea-relay-suboptions, kea-relay-v6managed ]
+  h1:
+  h2:
+  h3:
+
+links:
+- prefix.ipv4: 172.30.0.0/24
+  prefix.ipv6: 2001:db8:5500::/64
+  srv:
+  r1:
+
+- prefix.ipv4: 172.30.1.0/24
+  r1:
+    dhcp.server: [ srv ]
+    dhcp.vrf: global        # inter-VRF relay: the server lives in the global table
+  h1:
+  vrf: red
+  dhcp.client.ipv4: true
+
+- prefix.ipv4: 172.30.2.0/24
+  r1:
+    dhcp.server: [ srv ]
+  h2:
+  dhcp.client.ipv4: true
+
+- prefix.ipv6: 2001:db8:5503::/64
+  r1:
+    dhcp.server: [ srv ]
+  h3:
+  dhcp.client.ipv6: true
+
+validate:
+  h1_lease_vrfred:
+    description: h1 (VRF red) leased an address in 172.30.1.0/24 via DHCP
+    wait: 90
+    wait_msg: Waiting for DHCPv4 clients to lease an address
+    nodes: [ h1 ]
+    devices: [ iol ]
+    pass: h1 has a dynamic address in the VRF-red pool
+    fail: h1 has no address in 172.30.1.0/24
+    exec: "show ip interface brief"
+    valid: "'172.30.1.' in stdout and 'DHCP' in stdout"
+
+  h2_lease_glob:
+    description: h2 (global) leased an address in 172.30.2.0/24 via DHCP
+    nodes: [ h2 ]
+    devices: [ iol ]
+    pass: h2 has a dynamic address in the global pool
+    fail: h2 has no address in 172.30.2.0/24
+    exec: "show ip interface brief"
+    valid: "'172.30.2.' in stdout and 'DHCP' in stdout"
+
+  srv_lease_h1:
+    description: srv's Kea DHCPv4 lease file committed an address for h1 (VRF red pool)
+    level: warning
+    nodes: [ srv ]
+    pass: srv committed a 172.30.1.0/24 lease
+    fail: srv has no 172.30.1.0/24 lease on record
+    exec:
+      kea: "cat /var/lib/kea/kea-leases4.csv"
+    valid:
+      kea: "'172.30.1.' in stdout"
+
+  srv_lease_h2:
+    description: srv's Kea DHCPv4 lease file committed an address for h2 (global pool)
+    level: warning
+    nodes: [ srv ]
+    pass: srv committed a 172.30.2.0/24 lease
+    fail: srv has no 172.30.2.0/24 lease on record
+    exec:
+      kea: "cat /var/lib/kea/kea-leases4.csv"
+    valid:
+      kea: "'172.30.2.' in stdout"
+
+  h3_leased_v6:
+    description: h3 leased an address in 2001:db8:5503::/64 via DHCPv6
+    wait: 60
+    wait_msg: Waiting for the DHCPv6 client to lease an address
+    nodes: [ h3 ]
+    devices: [ iol ]
+    pass: h3 has an address in the v6 pool
+    fail: h3 has no address in 2001:DB8:5503::/64
+    exec: "show ipv6 interface brief"
+    valid: "'2001:DB8:5503:' in stdout"
+
+  srv_lease_h3:
+    description: srv's Kea DHCPv6 lease file committed an address for h3
+    level: warning
+    nodes: [ srv ]
+    pass: srv committed a 2001:db8:5503::/64 lease
+    fail: srv has no 2001:db8:5503::/64 lease on record
+    exec:
+      kea: "cat /var/lib/kea/kea-leases6.csv"
+    valid:
+      kea: "'2001:db8:5503:' in stdout"
+
+  relay_vrf_aware:
+    description: >-
+      r1's h1-facing interface is vrf-forwarding red with a global-table helper
+      address (inter-VRF relay, not a flat network) and standard option-82
+      suboptions (so Kea, not just another Cisco box, can read the link-selection)
+    level: warning
+    nodes: [ r1 ]
+    devices: [ iol ]
+    pass: r1 relays h1's subnet inter-VRF with standard suboptions
+    fail: r1 is missing the inter-VRF relay or standard-suboption config
+    exec: "show running-config"
+    valid: >-
+      "vrf forwarding red" in stdout
+      and "ip dhcp compatibility suboption link-selection standard" in stdout

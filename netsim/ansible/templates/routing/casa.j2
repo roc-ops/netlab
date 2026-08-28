@@ -1,0 +1,63 @@
+{#
+  Casa CMTS routing module (RocContLab #64) — static routes.
+  Casa NSI (vendor-docs/casa-8.8 NSI Ch.31 "Static Routing" + Ch.13 "ipv6 route"):
+    IPv4:  ip route   [vrf <v>] <prefix> {<nexthop>|<intf>|null0} [global|gw-vrf <v>]
+    IPv6:  ipv6 route [vrf <v>] <prefix> {<nexthop>|<intf>|null0} [gw-vrf <v>]
+  Casa uses CIDR prefixes (no dotted-mask). null0 = black-hole route. Inter-VRF leak:
+  gw-vrf <v>; a netlab nexthop.vrf of None (explicit null) leaks to the global table (IPv4 `global`).
+  (route-maps / prefix-lists / as-path / community lists = Casa NSI Ch.28 — follow-up in #64.)
+#}
+{% for sr in routing.static|default([]) %}
+{%   set vrf = 'vrf ' + sr.vrf + ' ' if 'vrf' in sr else '' %}
+{%   if 'ipv4' in sr %}
+{%     set nh4 = 'null0' if 'discard' in sr.nexthop
+                 else ((sr.nexthop.ipv4 + ' ' + sr.nexthop.intf) if ('intf' in sr.nexthop and 'ipv4' in sr.nexthop)
+                       else (sr.nexthop.intf if 'intf' in sr.nexthop else sr.nexthop.ipv4)) %}
+{%     set leak4 = ' global' if ('vrf' in sr.nexthop and sr.nexthop.vrf is none)
+                   else (' gw-vrf ' + sr.nexthop.vrf if sr.nexthop.vrf|default(false) else '') %}
+ip route {{ vrf }}{{ sr.ipv4|ansible.utils.ipaddr('subnet') }} {{ nh4 }}{{ leak4 }}
+{%   endif %}
+{%   if 'ipv6' in sr %}
+{%     set nh6 = 'null0' if 'discard' in sr.nexthop
+                 else ((sr.nexthop.ipv6 + ' ' + sr.nexthop.intf) if ('intf' in sr.nexthop and 'ipv6' in sr.nexthop)
+                       else (sr.nexthop.intf if 'intf' in sr.nexthop else sr.nexthop.ipv6)) %}
+{%     set leak6 = ' gw-vrf ' + sr.nexthop.vrf if sr.nexthop.vrf|default(false) else '' %}
+ipv6 route {{ vrf }}{{ sr.ipv6 }} {{ nh6 }}{{ leak6 }}
+{%   endif %}
+{% endfor %}
+{# ---- prefix-lists (routing.prefix). Casa NSI Ch.28: `ip[v6] prefix-list <name> seq <n>
+       {permit|deny} <prefix> [ge <n>] [le <n>]`. netlab min->ge, max->le. ---- #}
+{% for name, entries in (routing.prefix|default({})).items() %}
+{%   for e in entries %}
+{%     set fam = 'ipv6' if 'ipv6' in e else 'ip' %}
+{%     set afk = 'ipv6' if 'ipv6' in e else 'ipv4' %}
+{%     set pfx = e.ipv6 if 'ipv6' in e else e.ipv4 %}
+{#       netlab normalises min/max to a per-AF dict ({ipv4: n}); accept int or dict #}
+{%     set ge = (e.min[afk] if e.min is mapping else e.min) if e.min is defined else none %}
+{%     set le = (e.max[afk] if e.max is mapping else e.max) if e.max is defined else none %}
+{{ fam }} prefix-list {{ name }} seq {{ e.sequence }} {{ e.action|default('permit') }} {{ pfx }}{{ ' ge '+ge|string if ge is not none else '' }}{{ ' le '+le|string if le is not none else '' }}
+{%   endfor %}
+{% endfor %}
+{# ---- route-maps (device-scoped casa_route_maps). Casa NSI Ch.28 ---- #}
+{% for e in casa_route_maps|default([]) %}
+route-map {{ e.name }} {{ e.action|default('permit') }} {{ e.sequence }}
+{%   if e.description is defined %}
+  description "{{ e.description }}"
+{%   endif %}
+{%   if e.match_prefix is defined %}
+  match ip address prefix-list {{ e.match_prefix }}
+{%   endif %}
+{%   if e.set_locpref is defined %}
+  set local-preference {{ e.set_locpref }}
+{%   endif %}
+{%   if e.set_community is defined %}
+  set community {{ e.set_community|join(' ') }}
+{%   endif %}
+{%   if e.set_origin is defined %}
+  set origin {{ e.set_origin }}
+{%   endif %}
+{% endfor %}
+{# ---- static routes (device-scoped casa_static_routes) ---- #}
+{% for r in casa_static_routes|default([]) %}
+ip route {{ 'vrf '+r.vrf+' ' if r.vrf is defined else '' }}{{ r.prefix }} {{ r.nexthop }}{{ ' '+r.distance|string if r.distance is defined else '' }}{{ ' description "'+r.description+'"' if r.description is defined else '' }}
+{% endfor %}

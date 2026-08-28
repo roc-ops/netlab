@@ -1,0 +1,24 @@
+---
+# ArcOS platform smoke test (issue #39) -- initial + OSPF + BGP on two nodes.
+#
+# Live-verified rendering (netlab create) and clab.exec bootstrap (SSH reachable, admin-user
+# password changed, arcadmin login) against a real arcos:8.2.1A.P2 node. `netlab initial`
+# config push is currently blocked by an open Ansible network_cli/arrcus.arcos collection issue
+# -- see netsim/ansible/tasks/deploy-config/arcos.yml for the full account. Re-run this
+# topology with `netlab up` once that's resolved to confirm end-to-end OSPF/BGP convergence
+# (both were live-verified over gNMI against the same rendered config shape by the out-of-tree
+# reference device, netlab/arcos/arcos-2node.yml in roccontlab).
+#
+# Use a multilab id when running by hand to avoid colliding with other labs, e.g.:
+#   netlab up tests/integration/platform/arcos/arcos-2node.yml -s multilab.id=51
+provider: clab
+module: [ ospf, bgp ]
+defaults:
+  device: arcos
+nodes:
+  r1:
+    bgp.as: 65000
+  r2:
+    bgp.as: 65000
+links:
+- r1-r2

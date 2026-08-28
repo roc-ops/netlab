@@ -1,0 +1,67 @@
+#!/bin/bash
+# netlab `vrf` module -> Linux VRF-lite dataplane for the kea daemon device
+# (config_mode 'sh' -- runs INSIDE the kea container, see netsim/daemons/kea.yml).
+#
+# kea is a role:host daemon with no routing engine, so unlike a NOS the `vrf`
+# module has no routing-protocol-in-VRF config to render here -- it only needs the
+# pure L3 dataplane: create a Linux VRF master device per VRF and enslave kea's
+# directly-attached interface(s) into it, so a directly-attached DHCP client and
+# kea share an isolated VRF routing table (proven by 54-kea-direct-v4-vrf.yml).
+# This mirrors the dataplane half of netsim/ansible/templates/vrf/frr.data-plane.j2
+# (the only other Linux-VRF-lite path in the tree); FRR adds zebra/BGP config on
+# top, kea needs none.
+#
+# The `vrf` module is ordered BEFORE `dhcp` (dhcp.yml config_after: [vrf]), so this
+# runs after `initial` (which assigns the interface IPs) but before dhcp.j2 loads
+# kea -- kea therefore binds its sockets on an interface that is already in the VRF.
+set -e
+
+# 1. One Linux VRF master device per VRF (idempotent), each bound to its own table.
+{% for vname,vdata in vrfs|default({})|dictsort %}
+if [ ! -e /sys/devices/virtual/net/{{ vname }} ]; then
+  ip link add {{ vname }} type vrf table {{ vdata.vrfidx }}
+fi
+ip link set {{ vname }} up
+{% endfor %}
+
+# 2. Enslave each VRF data interface (mgmt eth0 excluded). Moving a link into a VRF
+#    FLUSHES its IPv4 address (and its IPv6 unless keep_addr_on_down is set), so
+#    preserve v6 and re-apply the addresses right after enslaving -- otherwise kea
+#    would have no address to source replies from / select the subnet on.
+{% for i in interfaces|default([]) if i.vrf is defined and i.ifname != 'eth0' %}
+sysctl -qw net/ipv6/conf/{{ i.ifname }}/keep_addr_on_down=1
+ip link set {{ i.ifname }} master {{ i.vrf }}
+ip link set {{ i.ifname }} up
+{%   if i.ipv4 is defined and i.ipv4 is string %}
+ip addr replace {{ i.ipv4 }} dev {{ i.ifname }}
+{%   endif %}
+{%   if i.ipv6 is defined and i.ipv6 is string %}
+ip -6 addr replace {{ i.ipv6 }} dev {{ i.ifname }}
+{%   endif %}
+{% endfor %}
+
+# 3. kea's DHCP daemons must open their sockets INSIDE the VRF as well: a UDP socket
+#    (kea's fallback socket for raw mode, and the whole v6 path) can only bind a
+#    VRF-local address when SO_BINDTODEVICE is set, which `ip vrf exec` does for the
+#    entire process. Record the VRF for the daemon launcher and restart the daemons
+#    so they re-exec under `ip vrf exec <vrf>` (see /usr/local/bin/kea-daemon-start
+#    baked by netsim/daemons/kea/Dockerfile). Only when EVERY data interface shares a
+#    single VRF -- a single kea process binds to exactly one VRF, so mixed global+VRF
+#    or multi-VRF interfaces on one kea node are out of scope (would need one kea
+#    process per VRF; not built).
+{% set ns = namespace(vrf=none, mixed=false) %}
+{% for i in interfaces|default([]) if i.ifname != 'eth0' %}
+{%   set iv = i.vrf|default('') %}
+{%   if ns.vrf is none %}
+{%     set ns.vrf = iv %}
+{%   elif ns.vrf != iv %}
+{%     set ns.mixed = true %}
+{%   endif %}
+{% endfor %}
+{% if ns.vrf and not ns.mixed %}
+mkdir -p /run/kea
+echo '{{ ns.vrf }}' > /run/kea/vrf.dhcp4
+echo '{{ ns.vrf }}' > /run/kea/vrf.dhcp6
+# restart under ip vrf exec; dhcp.j2 (ordered after vrf) then loads the real config
+supervisorctl restart kea-dhcp4 kea-dhcp6 >/dev/null 2>&1 || true
+{% endif %}

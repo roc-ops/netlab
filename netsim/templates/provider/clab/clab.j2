@@ -78,6 +78,9 @@ topology:
 {%     for nl in n.interfaces|default([]) if nl.linkindex|default(0) == l.linkindex %}
 {%       set clab = nl.clab|default({}) %}
   - endpoints:
+{%       if nl.mtu is defined %}
+    mtu: {{ nl.mtu }}
+{%       endif %}
     - "{{ n.name }}:{{ clab.name|default(nl.ifname) }}"
     - "macvlan:{{ l.clab.uplink }}"
 {%     endfor %}
@@ -90,6 +93,9 @@ topology:
 {%     for nl in n.interfaces|default([]) if nl.linkindex|default(0) == l.linkindex %}
 {%       if loop.first %}
   - type: dummy
+{%       if nl.mtu is defined %}
+    mtu: {{ nl.mtu }}
+{%       endif %}
     endpoint:
       node: "{{ n.name }}"
 {%       set clab = nl.clab|default({}) %}
@@ -112,13 +118,39 @@ topology:
     remote: "{{ l.clab.vxlan.remote }}"
     vni: {{ l.clab.vxlan.vni }}
     udp-port: {{ l.clab.vxlan.dstport }}
+{%       if nl.mtu is defined %}
+    mtu: {{ nl.mtu }}
+{%       endif %}
 {%       endfor %}
 {%     endfor %}
 {%   else %}
 {#
-    point-to-point link between two containers
+    point-to-point link between two containers.
+
+    netlab already resolves an authoritative per-interface MTU (nl.mtu, see
+    augment/links.py::add_node_interface) for every device -- including ones whose own CLI
+    'interface mtu' leaf does NOT actually change the underlying kernel veth MTU (e.g. ArcOS,
+    issue #39). Without rendering it here, containerlab creates the veth pair at the clab
+    kind's own hardcoded default MTU (e.g. arrcus_arcos defaults to 8974), which can silently
+    mismatch a peer kind's default (e.g. frr's 1500) and stall MTU-sensitive protocols like
+    OSPF (stuck in NEIGHBOR_EXSTART on the DBD MTU check) regardless of what either device's
+    own config claims. Look up the link's resolved MTU (both interfaces on a link carry the
+    same value once netlab has processed it) and pass it to containerlab's own 'mtu:' link
+    property so the veth is created with the correct MTU from the start -- the real fix, not
+    a per-device workaround.
 #}
+{%     set ns_mtu = namespace(v=none) %}
+{%     for n in nodes.values() if not (n.unmanaged|default(False)) %}
+{%       for nl in n.interfaces|default([]) if nl.linkindex|default(0) == l.linkindex and nl.mtu is defined %}
+{%         set ns_mtu.v = nl.mtu %}
+{%       endfor %}
+{%     endfor %}
+{%     if ns_mtu.v is not none %}
+  - mtu: {{ ns_mtu.v }}
+    endpoints:
+{%     else %}
   - endpoints:
+{%     endif %}
 {%     for n in nodes.values() if not (n.unmanaged|default(False)) %}
 {%       for nl in n.interfaces|default([]) if nl.linkindex|default(0) == l.linkindex %}
 {%         set clab = nl.clab|default({}) %}
@@ -134,8 +166,11 @@ topology:
 {%     for nl in n.interfaces|default([]) if nl.linkindex|default(0) == l.linkindex %}
 {%       set clab = nl.clab|default({}) %}
   - endpoints:
+{%       if nl.mtu is defined %}
+    mtu: {{ nl.mtu }}
+{%       endif %}
     - "{{ n.name }}:{{ clab.name|default(nl.ifname) }}"
-{# 
+{#
     Whatever we try to do to make the bridge interface names sane, someone
     inevitably finds a "counter-example" because (for example) one could not
     possibly make the node names unique in the first 10 characters

@@ -1,0 +1,49 @@
+---
+message: |
+  Use this topology to test the 'kea' daemon device's DIRECT-ATTACH DHCPv6 path
+  (no relay, no giaddr/link-address involved -- kea's own interface sits on the
+  same segment as the clients, so subnet selection has to work off the receiving
+  interface rather than a relay's forwarded packet). Adapted from netlab's own
+  device-agnostic tests/integration/dhcp/04-ipv6-server.yml (which normally runs
+  via device-module-test -d <device>) into a fixed, self-contained clab topology
+  so it stays inside the kea daemon device's assigned multilab namespace (55).
+
+defaults.sources.extra: [ ../wait_times.yml, ../warnings.yml ]
+
+provider: clab
+plugin: [ multilab ]
+defaults.multilab.id: 55
+
+addressing.lan:
+  ipv4: false
+  ipv6: 2001:db8:cafe::/48
+
+defaults.device: iol
+defaults.devices.iol.clab.image: vrnetlab/cisco_iol:17.18.02
+
+nodes:
+  c1:
+  c2:
+  dut:
+    device: kea
+    module: [ dhcp ]
+    dhcp.server: true
+
+links:
+- c1:
+    ipv6: dhcp
+  c2:
+    ipv6: dhcp
+  dut:
+
+validate:
+  lease_v6:
+    description: Check for DHCPv6 address assignments (direct-attach, no relay)
+    wait: 60
+    wait_msg: Waiting for DHCPv6 to complete
+    nodes: [ c1, c2 ]
+    devices: [ iosv, iol ]
+    pass: The DHCPv6 clients got IPv6 addresses directly from kea
+    fail: No IPv6 address assigned
+    exec: "show ipv6 interface brief {{ interfaces[0].ifname }}"
+    valid: "'CAFE' in stdout"

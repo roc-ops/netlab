@@ -1,0 +1,47 @@
+---
+message: |
+  Use this topology to test the 'kea' daemon device's DIRECT-ATTACH DHCPv4 path
+  (no relay, no giaddr involved -- kea's own interface sits on the same segment
+  as the clients, so subnet selection has to work off the receiving interface
+  rather than a relay-forwarded packet's giaddr). Mirrors the intent of netlab's
+  own device-agnostic tests/integration/dhcp/03-ipv4-server.yml, which normally
+  runs via device-module-test -d <device> with libvirt Linux VM clients -- this
+  box has no libvirt (`virsh` not found), so this is a fixed, self-contained clab
+  equivalent (IOL clients) that proves the same functionality and stays inside
+  the kea daemon device's assigned multilab namespace (55).
+
+defaults.sources.extra: [ ../wait_times.yml, ../warnings.yml ]
+
+provider: clab
+plugin: [ multilab ]
+defaults.multilab.id: 55
+
+defaults.device: iol
+defaults.devices.iol.clab.image: vrnetlab/cisco_iol:17.18.02
+
+nodes:
+  c1:
+  c2:
+  dut:
+    device: kea
+    module: [ dhcp ]
+    dhcp.server: true
+
+links:
+- c1:
+    ipv4: dhcp
+  c2:
+    ipv4: dhcp
+  dut:
+
+validate:
+  lease_v4:
+    description: Check for DHCPv4 address assignments (direct-attach, no relay)
+    wait: 60
+    wait_msg: Waiting for DHCPv4 to complete
+    nodes: [ c1, c2 ]
+    devices: [ iol ]
+    pass: The DHCPv4 clients got dynamic addresses directly from kea
+    fail: No IPv4 address assigned
+    exec: "show ip interface brief"
+    valid: "'DHCP' in stdout"

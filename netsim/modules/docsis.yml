@@ -1,0 +1,942 @@
+---
+# Custom DOCSIS access-side configuration module (RocContLab #48, hybrid-lab #57 Layer 2).
+#
+# Vendor-neutral MAC-domain data model — the CORE subset of ccap-docsis31.v1.yaml that the
+# guardrailed renderer (vendor-docs/.../render/casa/casa_render.py) consumes today: MAC domain
+# + DS SC-QAM channel set + US SC-QAM physical/logical channels + CM service group + diplexer
+# band edges. netlab PLANS this onto a CMTS node and validates it; it NEVER deploys it (the
+# CMTS is an `unmanaged`/external node). The render/casa bridge reads nodes.<node>.docsis and
+# feeds each MAC domain to casa_render -> guardrail -> Casa CLI.
+#
+# v1 scope note: mirrors the proven casa_render `mac-domain` spec (apply direction). OFDM/OFDMA
+# channels, reusable profiles, service flows / QoS service-classes, subscriber-mgmt, multicast,
+# DSG, BPI expand later (issue #48 / #65) as the renderer grows. Attribute names are the
+# underscore form of the data-model's hyphenated leaves; the bridge maps back on render.
+
+attributes:
+  node:
+    mac_domains:
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          domain_id:        { type: int, _required: True }
+          ip_bundle_ref:    { type: str, _required: True }
+          cm_service_group: { type: str, _required: True }
+          # Round-trip fidelity: verbatim per-domain scalar blocks around the channel binds — `pre`
+          # BEFORE the US binds (description/sync/insertion/ucd/sid-cluster/...), `post` AFTER the DS
+          # binds (mgmd/privacy/cm-status/diplexer/...). Omit for the generated forward path.
+          pre:  { type: list, _subtype: { type: str } }
+          post: { type: list, _subtype: { type: str } }
+          diplexer:
+            type: dict
+            _keys:
+              upstream_upper_band_edge_mhz:   { type: int }
+              downstream_lower_band_edge_mhz: { type: int }
+              downstream_upper_band_edge_mhz: { type: int }
+          downstream:
+            type: dict
+            _keys:
+              port:       { type: str, _required: True }
+              interleave: { type: str }
+              channels:                  # generator: N contiguous channels, uniform spacing (common case)
+                type: dict
+                _keys:
+                  start_hz: { type: int }
+                  count:    { type: int }
+                  step_hz:  { type: int }
+              channel_list:              # explicit per-channel — for NON-UNIFORM DS frequencies (a TV
+                type: list               # channel / interference occupying a slot). Overrides `channels`.
+                _subtype:
+                  type: dict
+                  _keys:
+                    channel:      { type: int, _required: True }   # channel index on the port
+                    frequency_hz: { type: int, _required: True }
+                    modulation:   { type: str }
+                    interleave:   { type: str }
+                    shutdown:     { type: bool }   # defined-but-disabled channel (freq 0); default active
+              ofdm:                      # DS OFDM channels (DOCSIS 3.1) on the same qam port
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    channel:            { type: int, _required: True }   # ofdm-channel index 0..3
+                    lower_freq_hz:      { type: int, _required: True }
+                    upper_freq_hz:      { type: int, _required: True }
+                    plc_freq_hz:        { type: int, _required: True }
+                    profiles:           { type: list, _subtype: { type: int } }  # global ofdm-profile idx per slot
+                    cyclic_prefix:      { type: int }
+                    rolloff_period:     { type: int }
+                    sc_spacing:         { type: int }
+                    interleave:         { type: int }
+                    pilot_scale_factor: { type: int }
+                    up_down_trap:       { type: bool }
+              dsg:                       # per-DS-channel DSG binding — `channel <n> dsg ...`
+                type: dict               # attaches node-global dsg objects + enables DCD on the DS set
+                _keys:
+                  channel:         { type: int }    # starting channel index (default 0)
+                  count:           { type: int }    # channels to apply to (default: the DS SC-QAM set)
+                  dcd_enable:      { type: bool }
+                  interval:        { type: int }    # 2-10 (DCD interval, 100ms ticks)
+                  timer_id:        { type: int }
+                  vendor_param_id: { type: int }
+                  channel_list:    { type: int }
+              bindings:                  # explicit DS binds (round-trip fidelity: exact indices +
+                type: list               # the `secondary` qualifier). Else generated from the plan.
+                _subtype:
+                  type: dict
+                  _keys:
+                    index: { type: int, _required: True }
+                    text:  { type: str, _required: True }   # e.g. "qam 0/0/0" or "ofdm 0/0/0 secondary"
+          upstream:
+            type: dict
+            _keys:
+              port:              { type: str }   # single-port form; multi-port sets `ports` instead
+              # generator (uniform): N channels, one width, evenly spaced (common case).
+              physical_channels: { type: list, _subtype: { type: int } }
+              width_hz:          { type: int }
+              start_hz:          { type: int }
+              step_hz:           { type: int }
+              logical_channel:   { type: int }
+              minislot:          { type: int }
+              channel_list:              # explicit per-channel — for NON-UNIFORM US freqs AND MIXED
+                type: list               # widths (e.g. one 3.2 MHz + three 6.4 MHz). Overrides the generator.
+                _subtype:
+                  type: dict
+                  _keys:
+                    physical_channel: { type: int, _required: True }
+                    frequency_hz:     { type: int, _required: True }
+                    width_hz:         { type: int, _required: True }
+                    logical_channel:  { type: int }
+                    minislot:         { type: int }
+              ofdma:                     # US OFDMA channels (DOCSIS 3.1); Casa supports channel 0 only
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    channel:           { type: int, _required: True }   # ofdma channel index (0)
+                    lower_freq_hz:     { type: int, _required: True }
+                    upper_freq_hz:     { type: int, _required: True }
+                    iuc_profile:       { type: int }    # global ofdma iuc-profile idx
+                    cyclic_prefix:     { type: int }
+                    sc_spacing:        { type: int }
+                    symbols_per_frame: { type: int }
+                    rolloff_period:    { type: int }
+                    pre_equalization:  { type: bool }
+                    regular_guardband: { type: bool }
+                    up_down_trap:      { type: bool }
+              bindings:                  # explicit MAC-domain US binds (round-trip fidelity: exact
+                type: list               # indices incl. gaps, OFDMA interleaved). Else generated.
+                _subtype:
+                  type: dict
+                  _keys:
+                    index: { type: int, _required: True }
+                    text:  { type: str, _required: True }   # e.g. "upstream 0/0.0/0" or "ofdma 0/0.0"
+              ports:                     # MULTI-PORT upstream: a MAC domain binding US channels from
+                type: list               # several RF ports (e.g. 0/0 AND 0/1). Each mirrors the
+                _subtype:                # single-port generator/channel_list/ofdma form above.
+                  type: dict
+                  _keys:
+                    port:              { type: str, _required: True }
+                    physical_channels: { type: list, _subtype: { type: int } }
+                    width_hz:          { type: int }
+                    start_hz:          { type: int }
+                    step_hz:           { type: int }
+                    logical_channel:   { type: int }
+                    minislot:          { type: int }
+                    channel_list:
+                      type: list
+                      _subtype:
+                        type: dict
+                        _keys:
+                          physical_channel: { type: int, _required: True }
+                          frequency_hz:     { type: int, _required: True }
+                          width_hz:         { type: int, _required: True }
+                          logical_channel:  { type: int }
+                          minislot:         { type: int }
+                    ofdma:
+                      type: list
+                      _subtype:
+                        type: dict
+                        _keys:
+                          channel:       { type: int, _required: True }
+                          lower_freq_hz: { type: int, _required: True }
+                          upper_freq_hz: { type: int, _required: True }
+                          iuc_profile:   { type: int }
+          # Per-MAC-domain IGMP/MLD proxy (mgmd) + ssm-map, rendered INSIDE interface docsis-mac.
+          # (Guarded by the docsis-mac domain check — no separate protection.)
+          mgmd:
+            type: dict
+            _keys:
+              ipv4:
+                type: dict
+                _keys:
+                  version:                    { type: int }   # 1-3 (IGMP)
+                  strict:                     { type: bool }
+                  query_interval:             { type: int }
+                  robustness:                 { type: int }
+                  max_query_response_time:    { type: int }
+                  last_member_query_interval: { type: int }
+                  enable:                     { type: bool }  # true -> `no mgmd ipv4 shutdown`
+              ipv6:
+                type: dict
+                _keys:
+                  version:                    { type: int }   # 1-2 (MLD)
+                  strict:                     { type: bool }
+                  query_interval:             { type: int }
+                  robustness:                 { type: int }
+                  max_query_response_time:    { type: int }
+                  last_member_query_interval: { type: int }
+                  enable:                     { type: bool }
+          ssm_map:                       # `multicast [vrf <v>] ssm-map <grp> access-list <name> [priority <n>]`
+            type: list
+            _subtype:
+              type: dict
+              _keys:
+                group:       { type: str, _required: True }
+                ipv6:        { type: bool }
+                access_list: { type: str, _required: True }
+                priority:    { type: int }
+                vrf:         { type: str }
+    # Global reusable profiles (node-scoped) — referenced BY INDEX from the channels above,
+    # so a plan is self-contained instead of assuming pre-provisioned indices. Rendered once,
+    # before the domains, and guardrailed (a profile may be DEFINED only on a free index).
+    ofdm_profiles:                       # DS OFDM modulation profiles (`ofdm profile <1-640>`)
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          index:              { type: int, _required: True }
+          profile_modulation: { type: str }
+          subcarrier_groups:
+            type: list
+            _subtype:
+              type: dict
+              _keys:
+                group:           { type: int, _required: True }
+                lower_freq_hz:   { type: int }
+                upper_freq_hz:   { type: int }
+                modulation:      { type: str }
+                skip_modulation: { type: str }
+    ofdma_iuc_profiles:                  # US OFDMA IUC profiles (`ofdma iuc-profile <1-64>`)
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          index: { type: int, _required: True }
+          data_iucs:
+            type: list
+            _subtype:
+              type: dict
+              _keys:
+                iuc:           { type: int, _required: True }
+                modulation:    { type: str, _required: True }
+                pilot_pattern: { type: int, _required: True }
+                minislot_cfg:  { type: int }
+          fine_ranging_iuc:
+            type: dict
+            _keys:
+              symbols: { type: int }
+              cycle:   { type: int }
+              offset:  { type: int }
+          initial_ranging_iuc:
+            type: dict
+            _keys:
+              symbols: { type: int }
+              cycle:   { type: int }
+              offset:  { type: int }
+    # Global QoS service classes (node-scoped) — `cable service-class <id>` with a `name` (SCN).
+    # MAC-domain / CM-config service flows reference the SCN by name. Guardrailed: a plan may
+    # DEFINE a service class only on a free id + free name. Fields are the CableLabs docs-qos
+    # leaves (mapped to Casa keywords in render_service_class).
+    service_classes:
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          id:                       { type: int, _required: True }   # Casa config handle
+          name:                     { type: str, _required: True }   # SCN, <=15 chars
+          direction:                { type: str }                    # upstream | downstream
+          scheduling_type:          { type: str }
+          priority:                 { type: int }
+          max_traffic_rate:         { type: int }
+          max_traffic_burst:        { type: int }
+          min_reserved_rate:        { type: int }
+          min_reserved_packet:      { type: int }
+          max_concatenated_burst:   { type: int }
+          peak_traffic_rate:        { type: int }
+          max_latency:              { type: int }
+          nominal_polling_interval: { type: int }
+          tolerated_poll_jitter:    { type: int }
+          unsolicited_grant_size:   { type: int }
+          nominal_grant_interval:   { type: int }
+          tolerated_grant_jitter:   { type: int }
+          grants_per_interval:      { type: int }
+          dscp_overwrite:           { type: int }
+          application_id:           { type: int }
+          active_timeout:           { type: int }
+          admitted_timeout:         { type: int }
+          tos_and_mask:             { type: str }
+          tos_or_mask:              { type: str }
+          request_policy:           { type: str }
+          required_attribute_mask:  { type: str }
+          forbidden_attribute_mask: { type: str }
+          aqm_enable:               { type: bool }
+    # Subscriber management (node-scoped) — CPE filter groups (`docsis submgt ip-filter`, additive)
+    # + box-wide `docsis submgt default` singletons. Guardrail: filter groups define a FREE group
+    # id; a box-wide default may only be ADDED (never overwrites a live one — it touches every domain).
+    subscriber_management:
+      type: dict
+      _keys:
+        defaults:                        # box-wide `docsis submgt default <kw> <val>`
+          type: dict
+          _keys:
+            cpe_active:                  { type: bool }
+            cpe_learnable:               { type: bool }
+            cpe_max_ipv4:                { type: int }
+            cpe_max_ipv6:                { type: int }
+            subscriber_downstream_filter:{ type: int }
+            subscriber_upstream_filter:  { type: int }
+            cm_downstream_filter:        { type: int }
+            cm_upstream_filter:          { type: int }
+            ps_downstream_filter:        { type: int }
+            ps_upstream_filter:          { type: int }
+            mta_downstream_filter:       { type: int }
+            mta_upstream_filter:         { type: int }
+            stb_downstream_filter:       { type: int }
+            stb_upstream_filter:         { type: int }
+        filter_groups:                   # `docsis submgt ip-filter <grp> <rule> {accept|deny} ...`
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              group_id: { type: int, _required: True }
+              rules:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    rule_id:                { type: int, _required: True }
+                    filter_action:          { type: str }   # permit | deny
+                    cm_interface_mask:      { type: str }
+                    source_address:         { type: str }
+                    destination_address:    { type: str }
+                    source_port_start:      { type: int }
+                    source_port_end:        { type: int }
+                    destination_port_start: { type: int }
+                    destination_port_end:   { type: int }
+                    ip_protocol:            { type: int }
+                    ip_tos_low:             { type: int }
+                    ip_tos_high:            { type: int }
+                    ip_tos_mask:            { type: int }
+    # BPI+/security (node-scoped) — `cable sec ...`. The most sensitive layer. Guardrail: box-wide
+    # singletons (encrypt-alg/cert-revocation/sav-auth/config-file-learning/tftp-options) may be
+    # ADDED only if not set — never overwritten; sav-config-lists (by name) + eae-exclusions (by id)
+    # are additive. Fields are the CableLabs docs-security leaves (mapped to Casa by render_security).
+    security:
+      type: dict
+      _keys:
+        sav_config_list:                     # source-address-verification lists
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              sav_config_list_name: { type: str, _required: True }
+              sav_rule:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    rule_id:        { type: int, _required: True }
+                    prefix_address: { type: str, _required: True }
+        cmts_sav_control:
+          type: dict
+          _keys:
+            cm_authentication_enable: { type: bool }
+        cmts_server_config:
+          type: dict
+          _keys:
+            config_file_learning_enabled: { type: bool }
+            tftp_options:                 { type: str }
+        cmts_encrypt:
+          type: dict
+          _keys:
+            encrypt_alg_priority: { type: list, _subtype: { type: str } }
+        cmts_certificate:
+          type: dict
+          _keys:
+            cert_revocation_method: { type: str }
+        cmts_cert_revocation_list:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              url:              { type: str, _required: True }
+              refresh_interval: { type: int }
+        cmts_online_cert_status_protocol:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              url:              { type: str, _required: True }
+              signature_bypass: { type: bool }
+        cmts_cm_eae_exclusion:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              cmts_cm_eae_exclusion_id: { type: int, _required: True }
+              mac_address:              { type: str, _required: True }
+              mac_address_mask:         { type: str }
+    # DOCSIS load balancing (node-scoped) — `load-balance ...`. Guardrail: `enable` +
+    # `general-group default-settings` are box-wide singletons (ADD-only); basic-rule / policy /
+    # restricted-group / restricted-cm additive by id; groups guarded against the domains they touch.
+    load_balancing:
+      type: dict
+      _keys:
+        enable: { type: bool }
+        basic_rule:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              rule_id:       { type: int, _required: True }
+              enable:        { type: bool }
+              disable_start: { type: int }
+              disable_end:   { type: int }
+        execution_rule:                    # Casa-specific (non-DOCSIS) execution rules
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              rule_id:            { type: int, _required: True }   # 1-16
+              methods:            { type: list, _subtype: { type: str } }   # e.g. "modem", "utilization dynamic"
+              upstream_method:    { type: str }
+              threshold_load:
+                type: dict
+                _keys:
+                  load:    { type: int }
+                  enforce: { type: int }
+                  minimum: { type: int }
+              rebalance_interval: { type: int }   # cable modem rebalance-interval (60-3600)
+              retry_interval:
+                type: dict
+                _keys:
+                  first:  { type: int }
+                  second: { type: int }
+              interval:           { type: int }
+              enable:             { type: bool }
+        load_balancing_policy:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              policy_id: { type: int, _required: True }
+              load_balance_rule:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    rule_ref:  { type: int, _required: True }
+                    rule_type: { type: str }   # basic (default) | execution
+        general_grp_defaults:
+          type: dict
+          _keys:
+            enable:     { type: bool }
+            policy_ref: { type: int }
+            init_tech:  { type: str }
+        general_grp_cfg:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              mac_domain_ref: { type: int, _required: True }
+              enable:         { type: bool }
+              policy_ref:     { type: int }
+              init_tech:      { type: str }
+              fiber_node_list:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    cm_service_group_ref: { type: str, _required: True }
+        restricted_grp_cfg:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              res_grp_id: { type: int, _required: True }
+              enable:     { type: bool }
+              policy_ref: { type: int }
+              init_tech:  { type: str }
+              grp_mac_domain:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    mac_domain_ref: { type: int, _required: True }
+              service_type_id_list: { type: list, _subtype: { type: int } }
+        restrict_cm_cfg:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              restricted_cm_id:   { type: int, _required: True }
+              mac_addr:           { type: str, _required: True }
+              mac_mask:           { type: str }
+              service_type_id:    { type: int }
+              restricted_grp_ref: { type: int }
+    # DOCSIS multicast (node-scoped) — `multicast ...` + `cable igmp static-group`. Guardrail: box-wide
+    # singletons (mode/load-balance/max-util/default-scn/authorization) ADD-only; group config/qos/
+    # encryption (by id) + authorization profiles (by name) + static-groups (by address) additive.
+    # (Per-MAC-domain mgmd = follow-up.) Fields = CableLabs docs-multicast-qos / -authorization leaves.
+    multicast:
+      type: dict
+      _keys:
+        globals:
+          type: dict
+          _keys:
+            mode:                           { type: str }   # manual | one-llid-per-group | single-llid
+            load_balance_initial_tech:      { type: str }
+            max_channel_util:               { type: int }
+            default_grp_service_class_name: { type: str }
+            authorization:
+              type: dict
+              _keys:
+                enable:          { type: bool }
+                default_action:  { type: str }   # deny | permit
+                max_session_num: { type: int }
+        group_qos:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:                 { type: int, _required: True }
+              service_class_name: { type: str, _required: True }
+              aggregate_max_sess: { type: int }    # aggregate mode; omit for `single` (per-session SF)
+              single:             { type: bool }   # documentary: single mode (the default when no aggregate)
+              app_id:             { type: int }
+        group_encryption:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:        { type: int, _required: True }
+              algorithm: { type: str, _required: True }   # aes128 | cmts | des40 | des56
+        group_config:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:             { type: int, _required: True }
+              group_address:  { type: str }
+              source_address: { type: str }
+              qos_id:         { type: int }
+              encryption_id:  { type: int }
+              phs_id:         { type: int }
+              priority:       { type: int }
+              tos_high:       { type: int }
+              tos_low:        { type: int }
+              tos_mask:       { type: int }
+              vrf:            { type: str }
+        authorization_profiles:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              name: { type: str, _required: True }
+              desc: { type: str }
+              session_rules:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    id:             { type: int, _required: True }
+                    action:         { type: str, _required: True }   # accept | deny
+                    source_prefix:  { type: str, _required: True }
+                    group_prefix:   { type: str, _required: True }
+                    ipv6:           { type: bool }
+                    priority:       { type: int }
+                    vrf:            { type: str }
+        static_groups:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              group:       { type: str, _required: True }
+              ipv6:        { type: bool }
+              source:      { type: str }
+              dsid:        { type: int }
+              description: { type: str }
+              channels:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    kind: { type: str, _required: True }   # qam | ofdm | pon
+                    ref:  { type: str, _required: True }
+    # DOCSIS Set-top Gateway (node-scoped) — `dsg ...`. Guardrail: dcd_global_enable / unicast_port
+    # box-wide singletons ADD-only; timer-id / channel-list / client-list / vendor-param-id /
+    # tunnel-group / tunnel additive by id. (Per-QAM `channel <n> dsg ...` binding = follow-up.)
+    dsg:
+      type: dict
+      _keys:
+        globals:
+          type: dict
+          _keys:
+            dcd_global_enable: { type: bool }
+            unicast_port:      { type: int }
+        timers:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              t1: { type: int, _required: True }
+              t2: { type: int, _required: True }
+              t3: { type: int, _required: True }
+              t4: { type: int, _required: True }
+        channel_lists:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              channels:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    channel_id: { type: int, _required: True }
+                    frequency:  { type: int, _required: True }
+        client_lists:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              clients:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    client_id:       { type: int, _required: True }
+                    id_type:         { type: str, _required: True }   # appId | broadcast | caSysId | macAddr
+                    id_value:        { type: str, _required: True }
+                    vendor_param_id: { type: int }
+        vendor_params:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              vendors:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    vendor_id: { type: int, _required: True }
+                    oui:       { type: str, _required: True }
+                    value:     { type: str }
+        tunnel_groups:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              channels:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    channel_id:      { type: int, _required: True }
+                    qam:             { type: str, _required: True }   # slot/port/chan
+                    rule_priority:   { type: int }
+                    vendor_param_id: { type: int }
+        tunnels:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:            { type: int, _required: True }
+              group:         { type: int }
+              dst_address:   { type: str }   # xxxx.xxxx.xxxx
+              client_list:   { type: int }
+              service_class: { type: str }
+              classifiers:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    id:               { type: int, _required: True }
+                    priority:         { type: int, _required: True }
+                    source:           { type: str, _required: True }   # ip/mask (or ipv6 form)
+                    ipv6:             { type: bool }
+                    destination_ip:   { type: str, _required: True }
+                    dest_port_start:  { type: int }
+                    dest_port_end:    { type: int }
+                    indcd:            { type: bool }
+                    indcd_port_start: { type: int }
+                    indcd_port_end:   { type: int }
+    # Remote PHY (node-scoped) — `rphy node-type` RPD profiles + `remote-phy-node` RPD instances.
+    # Guardrail: a plan DEFINEs a new node-type (free name) / RPD (free id), never redefines an
+    # existing one. (R-DTI/PTP timing, CIN, ccap-core, core-resource-set = documented follow-up.)
+    rphy:
+      type: dict
+      _keys:
+        node_types:                      # `rphy node-type <name>` capability profiles
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              name:                  { type: str, _required: True }
+              vendor_name:           { type: str }
+              vendor_id:             { type: int }
+              model_number:          { type: str }
+              qam_ports:             { type: int }
+              qam_channels:          { type: int }
+              ofdm_channels:         { type: int }
+              ofdma_channels:        { type: int }
+              upstream_ports:        { type: int }
+              upstream_channels:     { type: int }
+              upstream_log_channels: { type: int }
+              xgige_ports:           { type: int }
+              ptp_ports:             { type: int }
+              oob_ndf_channels:      { type: int }
+              oob_ndr_channels:      { type: int }
+              oob_ndr_aggregation:   { type: bool }
+              pnm_sac_engines:       { type: int }
+              dual_leakage_tones:    { type: int }
+              single_leakage_tones:  { type: int }
+              preamble_pattern:      { type: int }
+              rfm_ds_gain_functions: { type: int }
+              rfm_ds_tilt_functions: { type: int }
+              rfm_us_gain_functions: { type: int }
+        rpds:                            # `remote-phy-node <id>` RPD instances
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:                { type: int, _required: True }   # 1-320
+              mac_address:       { type: str }
+              node_type:         { type: str }   # references an rphy node-type name
+              node_description:  { type: str }
+              core_resource_set:  { type: int }
+              auxiliary_core_list: { type: int }   # references a global auxiliary-core-list
+              oob_551:                             # OOB 55-1 per-RPD (virtual-arpd-port | virtual-om)
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    type: { type: str, _required: True }   # virtual-arpd-port | virtual-om
+                    ref:  { type: str, _required: True }    # s/p/c or s/p
+              cin:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    id:    { type: int, _required: True }   # cin 1-4
+                    xgige: { type: str }                    # slot/port
+              broadcast_qam:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    id:            { type: int, _required: True }
+                    start_channel: { type: int, _required: True }
+              video_qam:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    id:            { type: int, _required: True }
+                    start_channel: { type: int, _required: True }
+              rfm_ds_power_gain:     { type: list, _subtype: { type: int } }
+              rfm_us_power_gain:     { type: list, _subtype: { type: int } }
+              rfm_ds_tilt:           { type: list, _subtype: { type: int } }
+              reverse_port_shutdown: { type: list, _subtype: { type: int } }
+              frx_enable:            { type: bool }
+              lci_enable:            { type: int }   # optional power (tenth dBmV)
+              enable:                { type: bool }  # node admin state (no shutdown)
+              ptp_ports:                       # RPD's PTP slave port(s), nested in the RPD
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    port:   { type: str, _required: True }   # [node:]slot/eth.ptp
+                    enable: { type: bool }
+                    docsis_timing:
+                      type: dict
+                      _keys:
+                        id:   { type: int, _required: True }
+                        role: { type: str, _required: True }   # ptp-master | ptp-slave
+        # R-DTI / CIN / ccap-core timing + core reachability (SAFETY-SENSITIVE): CINs carry live
+        # reachability; `ccap-core function` resets the node. Guardrail: timing objects additive,
+        # ccap-core singletons ADD-only.
+        ccap_core:
+          type: dict
+          _keys:
+            function:               { type: str }   # principal|auxiliary|... — RESETS the node
+            core_id_string:         { type: str }
+            gcp_loopback:           { type: int }
+            gcp_dscp:               { type: int }
+            video_operational_mode: { type: str }
+        docsis_timing:                     # R-DTI profiles — `interface docsis-timing <1-4>`
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:                          { type: int, _required: True }
+              clock_source:
+                type: dict
+                _keys:
+                  address: { type: str, _required: True }
+                  ipv6:    { type: bool }
+              alternate_clock_source:
+                type: dict
+                _keys:
+                  address: { type: str, _required: True }
+                  ipv6:    { type: bool }
+              ds_priority:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    level: { type: int, _required: True }   # 1 (master prio) | 2 (slave prio)
+                    value: { type: int, _required: True }
+              ds_domain:                   { type: int }
+              def_local_priority:          { type: int }
+              ds_announce_interval:        { type: int }
+              ds_announce_receipt_timeout: { type: int }
+              ds_sync_interval:            { type: int }
+              ds_delay_req_interval:       { type: int }
+              profile_identifier:          { type: str }
+              profile_version:             { type: str }
+              transport_type:              { type: str }
+              transport_dscp:              { type: int }
+              transport_cos:               { type: int }
+              unicast_contract_duration:   { type: int }
+              include_correction_field:    { type: bool }
+        cin:                               # CIN interfaces — `interface cin <1-4> {p2p|switched}`
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:             { type: int, _required: True }   # 1-4
+              mode:           { type: str, _required: True }   # point-to-point | switched
+              ipv4_address:   { type: str }
+              ipv4_mask:      { type: str }
+              ipv6_address:   { type: str }
+              vrf_forwarding: { type: str }
+              ip_prov_mode:   { type: str }
+              helper_address:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    address: { type: str, _required: True }
+                    ipv6:    { type: bool }
+              port_address_range:
+                type: dict
+                _keys:
+                  start: { type: str, _required: True }
+                  end:   { type: str, _required: True }
+                  ipv6:  { type: bool }
+              docsis_timing:
+                type: dict
+                _keys:
+                  id:   { type: int, _required: True }
+                  role: { type: str, _required: True }
+              mtu:            { type: int }
+        ptp_ports:                         # CSC-side PTP ports — `interface ptp-port <port>`
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              port:   { type: str, _required: True }
+              enable: { type: bool }
+              docsis_timing:
+                type: dict
+                _keys:
+                  id:   { type: int, _required: True }
+                  role: { type: str, _required: True }
+              clock_source:
+                type: dict
+                _keys:
+                  address: { type: str, _required: True }
+                  ipv6:    { type: bool }
+        core_resource_sets:                # `core-resource-set <1-64>` — DS/US channel-range split
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              ds_port_ranges:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    start: { type: int, _required: True }
+                    end:   { type: int, _required: True }
+                    channel_ranges:
+                      type: list
+                      _subtype:
+                        type: dict
+                        _keys:
+                          id:        { type: int, _required: True }
+                          type:      { type: str, _required: True }   # qam | ofdm | oob-ndf
+                          start:     { type: int, _required: True }
+                          end:       { type: int, _required: True }
+                          qualifier: { type: str }   # (qam) docsis | broadcast-video | narrowcast-video
+              us_port_ranges:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    start: { type: int, _required: True }
+                    end:   { type: int, _required: True }
+                    channel_ranges:
+                      type: list
+                      _subtype:
+                        type: dict
+                        _keys:
+                          id:    { type: int, _required: True }
+                          type:  { type: str, _required: True }   # ofdma | oob-ndr | upstream
+                          start: { type: int, _required: True }
+                          end:   { type: int, _required: True }
+        port_cin_bindings:                 # bind a physical CSC port to a CIN (reachability-critical)
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              kind: { type: str, _required: True }   # cgige | xgige
+              port: { type: str, _required: True }   # slot/port
+              cin:  { type: int, _required: True }    # 1-4
+        preamble_patterns:                 # `rphy preamble-pattern <1-64>` — US burst-receiver template
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id:                      { type: int, _required: True }
+              vendor_id:               { type: int }
+              model_number:            { type: str }
+              driver_version:          { type: str }
+              preamble_len:            { type: int }
+              preamble_string:         { type: str }
+              extended_preamble_string: { type: str }
+        auxiliary_core_lists:              # `auxiliary-core-list <1-16>` — R-PHY multi-core support
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              id: { type: int, _required: True }
+              cores:
+                type: list
+                _subtype:
+                  type: dict
+                  _keys:
+                    address: { type: str, _required: True }
+                    ipv6:    { type: bool }
+              alloc_aux_core_table:  { type: bool }
+              permit_aux_self_config: { type: bool }
+              resource_alloc_check:  { type: bool }

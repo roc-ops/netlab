@@ -1,0 +1,89 @@
+{#
+  Casa CMTS OSPF (RocContLab #64). Casa NSI — IOS-like but with device-specific forms
+  (grounded in vendor-docs/casa-8.8 NSI Ch.23 "Open Shortest Path First"):
+    * IPv4 / OSPFv2: `router ospf <pid>`; interfaces joined via `network <ip>/<prefix>
+      area <area>` statements — Casa has NO interface-level `ip ospf area`. router-id and
+      passive-interface live in router mode. Per-interface: `ip ospf network|cost|bfd`.
+    * IPv6 / OSPFv3: `router ospf6 <pid>` (router-id / passive-interface in router mode);
+      interfaces are enabled with the interface-level `ipv6 router ospf <pid> area <area>`.
+  netlab OSPF data model: node `ospf.{process,router_id,af,reference_bandwidth}`;
+  per-interface `l.ospf.{area,network_type,cost,passive,bfd.ipv4/ipv6}`.
+#}
+{% set pid = ospf.process|default(1) %}
+{# ---- per-interface OSPF settings (both address families) ---- #}
+{% for l in netlab_interfaces|default([]) if 'ospf' in l %}
+{%   set v6 = 'ipv6' in l and 'ipv6' in ospf.af %}
+{%   set is_phys = l.type not in ['loopback','tunnel'] %}
+{#   OSPFv2 needs no interface stanza for a loopback (covered by the network statement);
+     only emit a stanza when something actually renders under it. #}
+{%   set emit_if = (l.ospf.network_type is defined and is_phys)
+                   or l.ospf.cost is defined
+                   or (l.ospf.priority is defined and is_phys)
+                   or l.ospf.bfd.ipv4|default(False) or l.ospf.bfd.ipv6|default(False)
+                   or v6 %}
+{%   if emit_if %}
+interface {{ l.ifname }}
+{%   if l.ospf.network_type is defined and l.type not in ['loopback','tunnel'] %}
+{%     if 'ipv4' in l and 'ipv4' in ospf.af %}
+  ip ospf network {{ l.ospf.network_type }}
+{%     endif %}
+{%     if 'ipv6' in l and 'ipv6' in ospf.af %}
+  ipv6 ospf network {{ l.ospf.network_type }}
+{%     endif %}
+{%   endif %}
+{%   if l.ospf.cost is defined %}
+{%     if 'ipv4' in l and 'ipv4' in ospf.af %}
+  ip ospf cost {{ l.ospf.cost }}
+{%     endif %}
+{%     if 'ipv6' in l and 'ipv6' in ospf.af %}
+  ipv6 ospf cost {{ l.ospf.cost }}
+{%     endif %}
+{%   endif %}
+{%   if l.ospf.priority is defined and l.type not in ['loopback','tunnel'] %}
+{%     if 'ipv4' in l and 'ipv4' in ospf.af %}
+  ip ospf priority {{ l.ospf.priority }}
+{%     endif %}
+{%     if 'ipv6' in l and 'ipv6' in ospf.af %}
+  ipv6 ospf priority {{ l.ospf.priority }}
+{%     endif %}
+{%   endif %}
+{%   if l.ospf.bfd.ipv4|default(False) %}
+  ip ospf bfd
+{%   endif %}
+{%   if l.ospf.bfd.ipv6|default(False) %}
+  ipv6 ospf bfd
+{%   endif %}
+{%   if v6 %}
+  ipv6 router ospf {{ pid }} area {{ l.ospf.area }}
+{%   endif %}
+!
+{%   endif %}
+{% endfor %}
+{# ---- OSPFv2 (IPv4): router mode + network statements ---- #}
+{% if 'ipv4' in ospf.af %}
+router ospf {{ pid }}
+{%   if ospf.router_id is defined %}
+  router-id {{ ospf.router_id }}
+{%   endif %}
+{%   if ospf.reference_bandwidth is defined %}
+  auto-cost reference-bandwidth {{ ospf.reference_bandwidth }}
+{%   endif %}
+{%   for l in netlab_interfaces|default([]) if 'ospf' in l and 'ipv4' in l and l.ipv4 is string %}
+  network {{ l.ipv4|ansible.utils.ipaddr('subnet') }} area {{ l.ospf.area }}
+{%   endfor %}
+{%   for l in netlab_interfaces|default([]) if 'ospf' in l and l.ospf.passive|default(False) %}
+  passive-interface {{ l.ifname }}
+{%   endfor %}
+!
+{% endif %}
+{# ---- OSPFv3 (IPv6): router mode (interfaces enabled above) ---- #}
+{% if 'ipv6' in ospf.af %}
+router ospf6 {{ pid }}
+{%   if ospf.router_id is defined %}
+  router-id {{ ospf.router_id }}
+{%   endif %}
+{%   for l in netlab_interfaces|default([]) if 'ospf' in l and 'ipv6' in l and l.ospf.passive|default(False) %}
+  passive-interface {{ l.ifname }}
+{%   endfor %}
+!
+{% endif %}

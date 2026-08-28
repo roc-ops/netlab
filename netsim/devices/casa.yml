@@ -1,0 +1,179 @@
+---
+# Casa Systems CMTS (integrated CCAP chassis, e.g. C100G) — EXTERNAL-provider device (RocContLab #48).
+#
+# CMTS "big iron" is not virtualizable (real chassis; R-PHY cores too large for containers), so this
+# device is external-only: netlab generates the addressing plan + config artifact but never deploys it
+# (provider: external — https://netlab.tools/labs/external/). Drop a `casa` node with
+# `provider: external` into any topology to configure the physical CMTS alongside virtual (clab) NOS
+# nodes from ONE netlab YAML.
+#
+# NETWORK-SIDE (NSI) config = standard router/switch, driven by netlab existing modules + rendered to
+# Casa NSI CLI (grounded in wiki/okf/casa-8.8/nsi-config-cmd-ref) — RocContLab #53.
+# DOCSIS access-side = the custom `docsis` module (RocContLab data model + casa_render) — #48.
+# Contribution ledger: RocContLab docs/netlab-fork.md.
+
+description: Casa Systems CMTS (external / hardware-only)
+
+interface_name: gige 1/{ifindex}         # Casa `interface gige <slot>/<port>` (placeholder slot;
+                                          # for real HW set per-link `ifname`, or refine in #53)
+loopback_interface_name: loopback {ifindex}
+mgmt_if: eth 6/0                          # Casa FastEthernet mgmt port `interface eth <slot>/<port>`
+
+clab:
+  image: none                            # placeholder image — CMTS is `unmanaged` (never deployed by netlab)
+libvirt:
+  image: none
+external:
+  image: none                            # external config-gen mode (later phase)                            # external only — not deployable
+
+group_vars:
+  ansible_network_os: casa               # selects the netsim/ansible/templates/*/casa.j2 render path
+  ansible_connection: network_cli        # Casa CLI over SSH (used ONLY if pushing to real HW)
+  netlab_device_type: casa
+
+# DEVICE-SCOPED NSI interface attributes (RocContLab #53). Casa-specific interface knobs the core
+# `initial` model doesn't carry — declared under the device so they validate ONLY on casa nodes
+# (never pollute the shared/portable model) and render via initial/casa.j2. Preferred over verbatim
+# configlets: proprietary config becomes validated structured data. (Reverse-mapped from a real
+# chassis by render/casa/net_yaml.py; the round-trip is semantic, not byte-for-byte.)
+attributes:
+  interface:
+    encapsulation:  str                  # `encapsulation dot1q` on a vlan sub-interface
+    parent:         str                  # vlan parent physical port, e.g. "xgige 2/0"
+    mac_address:    str                  # static `mac address <addr>`
+    pim:            bool                  # IPv4 `ip pim sparse-mode` enabled on the interface
+    secondary_ipv4: { type: list, _subtype: { type: ipv4, use: subnet } }   # `ip address ... secondary`
+    # interface tail (RocContLab #53) — Casa-specific knobs with no netlab-core equivalent, modeled
+    # as device-scoped attributes rather than verbatim configlets.
+    mtu:                  int          # `mtu <n>`
+    mpls_mtu:             int          # `mpls mtu <n>`
+    tpid:                 str          # `tpid <hex>` (VLAN tag protocol id)
+    ip_access_group:      str          # `ip access-group <acl>` (numbered or named)
+    igmp:                 bool         # `ip igmp` (enable)
+    ipv6_dad:             bool         # `ipv6 dad enable`
+    rate_limit_multicast: int          # `rate-limit multicast <n>`
+    isis_hello_padding:   bool         # per-if `isis hello padding`
+    isis_priority:        int          # per-if `isis priority <n>`
+    rsvp: { type: dict, _keys: { hello_interval: int, hello_timeout: int, keep_multiplier: int, refresh_time: int } }
+    l2vpn: { type: dict, _keys: { dhcp_insert_option: int, mac_address_interval: int } }   # Casa L2VPN
+    # `interface trunk <n>` LAG members. netlab's lag module is LINK-based (LAG between two lab
+    # nodes); a CMTS trunk bundles local physical ports toward an EXTERNAL router, so — like the BGP
+    # external peers — the members ride a device-scoped attribute instead.
+    lag_members: { type: list, _subtype: { type: dict, _keys: { port: str, mode: str } } }
+    fec:            bool          # `fec` (forward error correction)
+    cable_helper_address:              # DOCSIS DHCP relay on the ip-bundle (per-scope helper IPs)
+      type: list
+      _subtype: { type: dict, _keys: { ip: { type: ipv4, use: address }, scope: str } }
+  node:
+    # External/static BGP peers (RocContLab #53): a CMTS peers with REAL routers (upstream ISPs,
+    # route reflectors), never lab nodes — so netlab's topology-derived `bgp.neighbors` cannot carry
+    # them. Device-scoped so it lives only on casa. Plus the Casa BGP process flags not in netlab's
+    # bgp model. Rendered by bgp/casa.j2. (Preferred over a verbatim configlet.)
+    casa_bgp:
+      type: dict
+      _keys:
+        ext_neighbors:
+          type: list
+          _subtype:
+            type: dict
+            _keys:
+              ipv4:        { type: ipv4, use: address }
+              ipv6:        { type: ipv6, use: address }
+              remote_as:   { type: int, _required: True }
+              description: str
+              advertisement_interval:       int
+              soft_reconfiguration_inbound: bool
+              prefix_list_in:  str
+              prefix_list_out: str
+        networks: { type: list, _subtype: { type: ipv4, use: subnet } }   # AF `network <p> mask <m>`
+        log_neighbor_changes: bool
+        always_compare_med:   bool
+    # Route-maps (Casa NSI Ch.28). netlab routing.policy carries match.prefix/set.locpref/
+    # set.community but NOT set.origin or per-entry description, so — like the BGP external peers —
+    # route-maps ride a complete device-scoped node attribute. (prefix-lists still use routing.prefix.)
+    casa_route_maps:
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          name:          { type: str, _required: True }
+          sequence:      int
+          action:        str
+          description:   str
+          match_prefix:  str
+          set_locpref:   int
+          set_community: { type: list, _subtype: { type: str } }
+          set_origin:    str
+    # Static routes. netlab routing.static carries prefix/nexthop/discard but NOT the Casa admin
+    # distance or per-route description (distance = route preference, matters), so device-scoped.
+    casa_static_routes:
+      type: list
+      _subtype:
+        type: dict
+        _keys:
+          prefix:      { type: str, _required: True }
+          nexthop:     { type: str, _required: True }
+          distance:    int
+          description: str
+          vrf:         str
+    # OSPF process-level network statements + passive model (Casa OSPFv2 joins interfaces via
+    # `network <subnet> area` statements independent of current interfaces — not netlab's per-if OSPF).
+    # ospf.process/router_id use netlab's ospf module; the networks + passive ride device-scoped.
+    casa_ospf:
+      type: dict
+      _keys:
+        process:   { type: int, _required: True }
+        router_id: str
+        networks: { type: list, _subtype: { type: dict, _keys: { prefix: str, area: str } } }
+        passive_default: bool
+        passive_active:  { type: list, _subtype: { type: str } }
+
+features:
+  initial:
+    ipv4: True
+    ipv6: True
+  # Network-side (NSI) modules — declared as their Casa NSI render templates land (RocContLab #64,
+  # grounded in vendor-docs/casa-8.8 NSI cmd ref). DOCSIS access-side = custom `docsis` module (#48).
+  ospf:
+    # Casa NSI Ch.23. OSPFv2 = `router ospf` + `network <ip>/<prefix> area` statements;
+    # OSPFv3 = `router ospf6` + interface `ipv6 router ospf <pid> area`. Rendered: network_type,
+    # cost, priority, bfd, passive, router_id. (timers/password/import/areas = follow-up in #64.)
+    priority: true
+  isis:
+    # Casa NSI Ch.10. router isis <tag>/net/is-type/metric-style wide; interface
+    # ip|ipv6 router isis, isis network point-to-point, metric, circuit-type, bfd.
+    # CASA: is-type/circuit-type use `level-2-only`. (import/auth = follow-up.)
+    circuit_type: true
+  bgp:
+    # Casa NSI Ch.3. router bgp/bgp router-id; neighbor remote-as/description/
+    # update-source/next-hop-self; address-family {ipv4|ipv6} unicast; network (CIDR).
+    # (import/redistribute, peer-groups, route-maps = follow-up in #64.)
+    activate_af: true
+    advertise: true
+  vrf:
+    # Casa NSI Ch.35. ip vrf <name>/rd/route-target; interface ip vrf forwarding <name>.
+    # Routing inside VRFs (ospf/bgp per-VRF) = follow-up in #64.
+    ospfv2: false
+    ospfv3: false
+    bgp: false
+  routing:
+    # Casa NSI Ch.31/13 static routes (ip route / ipv6 route, CIDR, null0, gw-vrf/global).
+    # route-maps/prefix-lists/as-path/community (Casa Ch.28) = follow-up in #64.
+    static:
+      vrf: true          # ip route vrf <name>
+      inter_vrf: true    # gw-vrf <name> / global (leak)
+      discard: true      # null0 black-hole
+    prefix: True         # ip/ipv6 prefix-list (routing.prefix) — RocContLab #53
+  mpls:
+    # Casa NSI Ch.15. `mpls ip` (global+interface) + `router ldp` (router-id/transport-address)
+    # + interface `enable-ldp ipv4`. LDP only — Casa NSI has no BGP-LU/6PE. (vpn/te = follow-up.)
+    ldp: true
+  ripv2:
+    # Casa NSI Ch.29. IPv4 RIPv2 via `router rip`/`version 2`/`network` statements + passive.
+    # RIPng interface-attach is undocumented in the NSI ref -> IPv6 RIP intentionally unsupported.
+    ipv4: true
+    passive: true
+  docsis:
+    # DOCSIS access-side custom module (RocContLab #48). netlab plans MAC domains onto this
+    # node; the render/casa bridge renders them via the guardrailed casa_render (external).
+    mac_domains: true

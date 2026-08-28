@@ -1,0 +1,49 @@
+---
+# Direct-attach DHCPv4 with the client AND kea's own interface inside a VRF (no
+# relay in between). Proves the netlab `vrf` module now works on the kea daemon
+# device via Linux VRF-lite (netsim/daemons/kea/vrf.j2): kea creates the VRF,
+# enslaves its directly-attached interface, and serves DHCP from inside it. This
+# was a documented boundary probe until daemon/kea gained VRF-lite support -- see
+# the long comment in netsim/daemons/kea.yml.
+message: |
+  Increment-3: direct-attach DHCPv4 with the client AND kea's own interface inside
+  VRF red (no relay). kea sets up Linux VRF-lite (ip link add red type vrf ...),
+  enslaves its data interface, re-applies the IP, and serves DHCP from within the
+  VRF. c1 should get a dynamic address directly from kea over the VRF interface.
+
+defaults.sources.extra: [ ../wait_times.yml, ../warnings.yml ]
+
+provider: clab
+plugin: [ multilab ]
+defaults.multilab.id: 55
+
+defaults.device: iol
+defaults.devices.iol.clab.image: vrnetlab/cisco_iol:17.18.02
+
+vrfs:
+  red:
+
+nodes:
+  c1:
+  dut:
+    device: kea
+    module: [ dhcp, vrf ]
+    dhcp.server: true
+
+links:
+- c1:
+    ipv4: dhcp
+  dut:
+  vrf: red
+
+validate:
+  lease_v4_vrf:
+    description: Check for DHCPv4 address assignment (direct-attach, in VRF red)
+    wait: 60
+    wait_msg: Waiting for DHCPv4 to complete
+    nodes: [ c1 ]
+    devices: [ iol ]
+    pass: c1 got a dynamic address directly from kea inside VRF red
+    fail: No IPv4 address assigned
+    exec: "show ip interface brief"
+    valid: "'DHCP' in stdout and '172.16.0.' in stdout"

@@ -1,0 +1,16 @@
+# SONiC LAG spike — issue #13: two parallel links -> PortChannel1 (LACP/teamd),
+# OSPF over the aggregate proves the datapath.   netlab up sonic-lag.yml
+provider: clab
+plugin: [ multilab ]
+defaults:
+  device: sonic_clab
+  multilab:
+    id: 52
+
+module: [ lag, ospf ]
+
+nodes: [ s1, s2 ]
+
+links:
+- lag:
+    members: [ s1-s2, s1-s2 ]

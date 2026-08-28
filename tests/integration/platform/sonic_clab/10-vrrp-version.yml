@@ -1,0 +1,21 @@
+# SONiC vrrp.version plugin — issue #19. FRR vrrpd defaults to VRRP v3; this pins
+# the group to v2 and verifies FRR actually advertises v2. s1 is Master (prio 200).
+#   cd netlab/sonic && netlab up sonic-vrrpversion.yml
+provider: clab
+plugin: [ multilab, vrrp.version ]
+defaults:
+  device: sonic_clab
+  multilab:
+    id: 52
+module: [ gateway ]
+gateway.protocol: vrrp
+gateway.vrrp.version: 2
+nodes:
+  s1:
+  s2:
+links:
+- s1:
+    gateway.vrrp.priority: 200
+  s2:
+  gateway: true
+  prefix: 172.31.43.0/24

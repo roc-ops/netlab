@@ -1,0 +1,16 @@
+# 2-node SONiC (clab) eBGP smoke test — issue #40.
+provider: clab
+plugin: [ multilab ]
+defaults:
+  device: sonic_clab
+  multilab:
+    id: 52
+module: [ bgp ]
+nodes:
+  s1:
+    bgp.as: 65001
+  s2:
+    bgp.as: 65002
+links:
+  - s1:
+    s2:
