@@ -11,6 +11,7 @@
    Data-plane interfaces are safe to render
    without a flag: the netlab "interfaces" list only ever holds links from the topology, i.e.
    ports that were explicitly given to netlab. #}
+{% import "dnos.macro.j2" as dn with context %}
 {% if netlab_manage_identity|default(False) %}
 system
   name {{ inventory_hostname }}
@@ -24,9 +25,9 @@ interfaces
     ipv4-address {{ loopback.ipv4 }}
 {%   endif %}
 {%   if loopback.ipv6 is defined %}
-{#   DNOS rejects any loopback IPv6 prefix other than /128:
-     "Loopback interface IPv6 address on lo0 can be configured only with /128" #}
-    ipv6-address {{ loopback.ipv6|ipaddr("address") }}/128
+{#   /128 coercion -- the rule and the reason are in templates/dnos.macro.j2, shared with
+     bgp/dnos.j2, which has to originate exactly what is configured here. #}
+    ipv6-address {{ dn.loopback_ipv6(loopback.ipv6) }}
 {%   endif %}
   !
 {% endif %}
@@ -46,11 +47,10 @@ interfaces
 {%   endif %}
 {%   for af in ["ipv4","ipv6"] if l[af] is defined and l[af] is not sameas true %}
 {%     if af == 'ipv6' and l.type|default('') == 'loopback' %}
-{#     DNOS rejects any loopback IPv6 prefix other than /128. This is keyed on interface TYPE,
-       not on position in this file: an ADDITIONAL loopback goes through this loop rather than
-       the system-loopback block above, so a coercion that lives only up there silently misses
-       every loopback except the first. #}
-    ipv6-address {{ l[af]|ipaddr("address") }}/128
+{#     Same /128 coercion, keyed on interface TYPE rather than on position in this file: an
+       ADDITIONAL loopback goes through this loop rather than the system-loopback block above,
+       so a rule that lives only up there silently misses every loopback except the first. #}
+    ipv6-address {{ dn.loopback_ipv6(l[af]) }}
 {%     else %}
     {{ af }}-address {{ l[af] }}
 {%     endif %}

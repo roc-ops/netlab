@@ -6,9 +6,15 @@
 # configure / load merge / commit check / commit. The script runs on the controller
 # (ansible_connection is local for this device), not on the box.
 #
-# DEFAULTS TO DRY RUN. This device is always physical hardware carrying someone else's traffic,
-# so "netlab initial" and "netlab config" stop after "commit check" and discard the candidate
-# unless the operator explicitly opts in:
+# ONE PATH FOR BOTH PROVIDERS. A cDNOS container answers ssh and scp on port 22 of its
+# management address exactly as the hardware does, so the transport does not change between an
+# external node and a clab node -- only the address does, and ansible_host already holds the
+# right one (the container management IP for clab, the hardware IP for external). Nothing here
+# is provider-aware; the two knobs below are set per provider in devices/dnos.yml instead.
+#
+# DEFAULTS TO DRY RUN, because the device is physical hardware carrying someone else's traffic
+# unless we know otherwise. "netlab initial" and "netlab config" stop after "commit check" and
+# discard the candidate unless the operator explicitly opts in:
 #
 #     groups:
 #       all:
@@ -18,6 +24,23 @@
 # A dry run still prints the real candidate diff and still fails the play if commit check fails,
 # so it is a genuine validation pass rather than a no-op -- what it does not do is change the
 # running configuration of a production router because someone typed "netlab initial".
+#
+# The clab provider opts in on the device's behalf: a container netlab started 30 seconds ago
+# has no traffic to protect, and a lab that only ever validates its own configuration and never
+# applies it is not a lab.
+#
+# CREDENTIALS: hardware passwords live in a FILE (netlab_dnos_password_file, default ~/.dnos_pw)
+# so they need not appear in a topology. cDNOS ships with a fixed dnroot/dnroot, and requiring a
+# password file for it would mean every container-only lab has to create one to hold a value
+# that is public -- so netlab_dnos_password is accepted as an alternative and set for clab in
+# devices/dnos.yml. It is not more exposed than the file: either way the password ends up on the
+# sshpass command line.
+#
+# The script is run with ansible_playbook_python -- the interpreter Ansible itself is running
+# under, i.e. netlab's virtualenv -- and not with whatever "python3" is first on PATH. The
+# script needs pexpect, and PATH python3 is the system interpreter, which on a stock Ubuntu box
+# does not have it. Both are "python3", so the failure reads as a broken script rather than as
+# the wrong interpreter.
 #
 - set_fact:
     dnos_cfg_file: "/tmp/dnos_{{ inventory_hostname }}_{{ netsim_action }}.cfg"
@@ -29,17 +52,47 @@
     dest: "{{ dnos_cfg_file }}"
     mode: 0600
 
+# The argument list is built as a LIST rather than spliced into a free-form command string. A
+# password containing a space or a quote would otherwise split into the wrong arguments, and a
+# conditional flag rendered as "" would become a literal empty argument that argparse rejects --
+# so --dry-run is appended as a list element or not at all.
+#
+# COMMITTING IS GATED ON THE PROVIDER AS WELL AS ON THE FLAG. netlab_dnos_commit: True is set for
+# the clab provider in devices/dnos.yml, and today it cannot reach a hardware node: a clab
+# topology rejects "provider: external", and the provider group_vars merge keys on the
+# topology-wide provider. But that is netlab's compatibility table protecting this device rather
+# than anything here, and the hybrid virtual/physical direction of this lab points straight at
+# clab gaining external as a secondary provider. Asking the node what it actually is costs one
+# comparison and does not depend on that table staying as it is.
+#
+# The whole condition stays inside ONE Jinja expression on purpose. Lifted into a task var it
+# would round-trip through a string, and the string "False" is truthy -- which would fail in the
+# direction of committing to hardware.
+#
+- set_fact:
+    dnos_deploy_argv: >-
+      {{ [ ansible_playbook_python,
+           playbook_dir ~ '/tasks/deploy-config/dnos-deploy.py',
+           '--host', ansible_host|default(inventory_hostname),
+           '--user', ansible_user|default('dnroot'),
+           '--password' if netlab_dnos_password is defined else '--password-file',
+           netlab_dnos_password|default(netlab_dnos_password_file|default('~/.dnos_pw')),
+           '--config', dnos_cfg_file,
+           '--name', dnos_remote_name ]
+         + ([] if (netlab_dnos_commit|default(False)
+                   and (provider|default(netlab_provider)) == 'clab')
+            else [ '--dry-run' ]) }}
+  no_log: "{{ netlab_dnos_password is defined }}"
+
 - name: "deploy {{ netsim_action }} config to {{ inventory_hostname }} (load merge + commit)"
-  command: >-
-    python3 {{ playbook_dir }}/tasks/deploy-config/dnos-deploy.py
-    --host {{ ansible_host|default(inventory_hostname) }}
-    --user {{ ansible_user|default("dnroot") }}
-    --password-file {{ netlab_dnos_password_file|default("~/.dnos_pw") }}
-    --config {{ dnos_cfg_file }}
-    --name {{ dnos_remote_name }}
-    {{ "" if netlab_dnos_commit|default(False) else "--dry-run" }}
+  command:
+    argv: "{{ dnos_deploy_argv }}"
   register: dnos_deploy
   failed_when: dnos_deploy.rc != 0
+  # The password is one of those arguments, so without this it is printed by -vvv and written to
+  # the Ansible log. Only where there IS an inline password: the hardware path has none to hide,
+  # and hiding that task instead would cost the operator the failure output on a live router.
+  no_log: "{{ netlab_dnos_password is defined }}"
   tags: [ print_action, always ]
 
 - name: "show the candidate diff that was applied to {{ inventory_hostname }}"

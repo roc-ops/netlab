@@ -1,0 +1,56 @@
+#
+# cDNOS readiness check.
+#
+# The generic SSH readiness check cannot be used here: it proves a device is up by running a show
+# command over the SSH exec channel, and the DNOS CLI answers "Invalid command" with rc=1 to
+# EVERY command passed that way, ready or not. It would never succeed, whatever the node is doing.
+#
+# So the probe is the deploy transport itself, in --wait-ready mode: connect, enter configuration
+# mode, and commit an empty candidate. That is the only thing that actually distinguishes a node
+# which will accept its configuration from one which will not -- measured on a cold container:
+#
+#     t=15s   cli_server RUNNING, ssh refuses the connection
+#     t=20s   cli_server RUNNING, ssh refuses the connection
+#     t=26s   commit accepted
+#
+# Every cheaper signal reports ready during that window. Watching cli_server in "ubervisorctl
+# status" (the readiness view the vendor documentation points at) goes RUNNING at t=15s, and a
+# deploy started there dies on scp; and a node whose ssh and CLI are both up can still fail the
+# final "commit" with "System is not ready yet", because load merge and commit check both pass
+# first. Waiting for the thing we need is the only check that is not a guess.
+#
+# (The vendor guide's marker string "success: deployment_agent entered RUNNING state" does not
+# exist in 26.2 at all. Roughly a dozen services stay STOPPED by design, so "everything running"
+# is not a readiness condition either.)
+#
+# This runs on the controller: ansible_connection is local for this device.
+#
+---
+- name: Wait for {{ inventory_hostname }} to accept configuration
+  local_action:
+    module: command
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ playbook_dir }}/tasks/deploy-config/dnos-deploy.py"
+      - --host
+      - "{{ ansible_host|default(inventory_hostname) }}"
+      - --user
+      - "{{ ansible_user|default('dnroot') }}"
+      - "{{ '--password' if netlab_dnos_password is defined else '--password-file' }}"
+      - "{{ netlab_dnos_password|default(netlab_dnos_password_file|default('~/.dnos_pw')) }}"
+      - --wait-ready
+  changed_when: False
+  failed_when: False
+  register: cdnos_ready
+  until: cdnos_ready.rc == 0
+  retries: "{{ netlab_check_retries|default(30) }}"
+  delay: "{{ netlab_check_delay|default(10) }}"
+
+- name: Confirm {{ inventory_hostname }} is ready
+  assert:
+    that: cdnos_ready.rc == 0
+    fail_msg: >-
+      {{ inventory_hostname }} never accepted a commit: {{ cdnos_ready.stderr|default('') }}.
+      "docker logs {{ hostname|default(inventory_hostname) }}" says why a node that never came up
+      at all failed; an immediate exit 32 means the host is missing either the cgroup v1 net_cls
+      mount or a free loop device (see netsim/devices/dnos.yml).
