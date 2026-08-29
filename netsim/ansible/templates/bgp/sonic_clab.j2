@@ -1,4 +1,20 @@
-!
-no router bgp
-!
+{#
+  SONiC BGP, container deployment.
+
+  This shim exists only so the <device>.j2 lookup does not select the VM template bgp/sonic.j2
+  now that sonic_clab is parented to FRR. It deliberately emits NO "no router bgp" reset.
+
+  The VM template opens with one, and this file was forked from it carrying that line along.
+  docker-sonic-vs starts with no BGP process at all, so vtysh rejects the reset with rc 13
+  ("% No BGP process is configured" / "Failure to communicate[13] to bgpd, line: no router bgp")
+  and, under SONiC's integrated config, fails the whole deploy -- while still applying the rest
+  of the file, so BGP ends up correctly configured and netlab reports failure anyway. A retry
+  then succeeds because a process exists by then, which disguises it as a startup race.
+
+  There is no render-time-safe form of the reset: "no router bgp <as>" fails identically on a
+  node that has never had a BGP process. Dropping it matches bgp/frr.j2 (which emits no reset)
+  and the in-tree sonic-clab shim. Cost, accepted deliberately upstream for the same reason: a
+  redeploy no longer clears stale BGP state, so a neighbor removed from the topology survives
+  until "netlab down".
+#}
 {% include "frr.j2" +%}

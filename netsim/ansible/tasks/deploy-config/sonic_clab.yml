@@ -19,9 +19,14 @@
 
 - name: "strip 'no router ...' reset lines FRR mgmtd rejects before the process is configured, then vtysh -f"
   # FRR 10.5's mgmtd on docker-sonic-vs rejects a bare 'no router <proto>' (rc 13) when that
-  # protocol has never been configured, aborting the whole vtysh -f. Our <module>/sonic_clab.j2
-  # templates emit one of these reset lines before re-declaring the protocol, so strip it here
-  # rather than special-case every module template. Harmless once the protocol IS configured
+  # protocol has never been configured, aborting the whole vtysh -f.
+  #
+  # NOTE: this task is INERT for module configuration. sonic_clab inherits netlab_config_mode: sh
+  # from frr.yml, so providers/clab/configs.py adds every module to netlab_ansible_skip_module and
+  # runs the rendered script with `docker exec` instead -- this Ansible path is never reached for
+  # them (verify: the deployed /etc/config/NN-*.sh is what actually runs). No sonic_clab module
+  # template emits a reset line any more either: bgp was the only one, and bgp/sonic_clab.j2 no
+  # longer does. Kept only for `netlab config` custom templates. Harmless once configured
   # (the line is simply absent from later deploys' rendered diff... when present, still stripped).
   shell: |
     grep -vE '^no router ' /tmp/config.sh >/tmp/config.frr.sh
