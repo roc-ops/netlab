@@ -2,6 +2,9 @@ mypy
 types-Jinja2
 types-PyYAML
 types-requests
+# stubs for the DNOS deploy script (netsim/ansible/tasks/deploy-config/dnos-deploy.py);
+# pexpect itself is not a netlab runtime dependency -- that script names it if it is missing
+types-pexpect
 typing-extensions
 sphinx
 recommonmark

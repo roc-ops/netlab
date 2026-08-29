@@ -30,15 +30,15 @@
   local_action:
     module: command
     argv:
-      - "{{ ansible_playbook_python }}"
-      - "{{ playbook_dir }}/tasks/deploy-config/dnos-deploy.py"
-      - --host
-      - "{{ ansible_host|default(inventory_hostname) }}"
-      - --user
-      - "{{ ansible_user|default('dnroot') }}"
-      - "{{ '--password' if netlab_dnos_password is defined else '--password-file' }}"
-      - "{{ netlab_dnos_password|default(netlab_dnos_password_file|default('~/.dnos_pw')) }}"
-      - --wait-ready
+    - "{{ ansible_playbook_python }}"
+    - "{{ playbook_dir }}/tasks/deploy-config/dnos-deploy.py"
+    - --host
+    - "{{ ansible_host|default(inventory_hostname) }}"
+    - --user
+    - "{{ ansible_user|default('dnroot') }}"
+    - "{{ '--password' if netlab_dnos_password is defined else '--password-file' }}"
+    - "{{ netlab_dnos_password|default(netlab_dnos_password_file|default('~/.dnos_pw')) }}"
+    - --wait-ready
   changed_when: False
   failed_when: False
   register: cdnos_ready
