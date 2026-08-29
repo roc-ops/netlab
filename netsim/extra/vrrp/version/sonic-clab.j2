@@ -1,8 +1,10 @@
 #!/bin/bash
 #
-# Ported verbatim from roccontlab netlab/sonic/templates/vrrp.version/sonic.j2 (out-of-tree,
-# proven live) for the in-tree sonic_clab device (issue #40) -- self-contained vtysh -f script,
-# no adaptation needed.
+# SONiC on containerlab. The name is not a preference: netlab looks up a node_config template as
+# <custom_config>/<netlab_device_type>-<node_provider>.j2 (defaults/paths.yml, custom.files), which
+# is sonic-clab.j2 for device sonic under provider clab. There is no fallback that would work if
+# this name were wrong -- the plugin reports "Cannot find vrrp.version configuration template" and
+# the run fails, which is how the rename in this series was caught.
 #
 # vrrp.version plugin (issue #19) — FRR vrrpd supports both VRRP v2 and v3. netlab
 # renders this as a separate per-node config step; FRR requires the vrrp instance
