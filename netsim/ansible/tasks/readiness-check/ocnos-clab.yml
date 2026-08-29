@@ -1,0 +1,81 @@
+#
+# OcNOS (clab) readiness check.
+#
+# Without this, netlab waited for nothing at all: ocnos declared no netlab_ready steps, so
+# "netlab up" went straight from "container created" to "push configuration" and reliably
+# died with "Task failed: No existing session" -- the ipinfusion.ocnos collection failing to
+# open a network_cli session against an sshd that was not listening yet.
+#
+# ocnos.yml sets netlab_ready to [ ansible ] -- this file -- and deliberately NOT [ ssh ].
+#
+# The built-in 'ssh' step cannot work here. It runs
+#
+#     sshpass -p ocnos ssh <node> "show version"
+#
+# and waits for exit status 0, but cmlsh has no non-interactive exec mode: it ignores the
+# command, prints a usage hint, and exits 1. Every time, ready or not. Confirmed with ssh -v
+# against a fully booted node:
+#
+#     Sending command: show version
+#     Try `cmlsh --help' for more information.
+#     debug1: Exit status 1
+#
+# So that step can never go green, and enabling it just stalls every deploy until the wait
+# expires. (Careful measuring the exit status by hand: piping ssh into grep/head reports the
+# *pipeline's* status, which hides this.)
+#
+# Two stages, in this order, because they answer different questions:
+#
+#   1. A local shell probe. Cheap, and safe during the window where the node refuses
+#      connections outright. It looks for the cmlsh usage hint rather than command output --
+#      that string appearing at all proves sshd is accepting and the restricted shell is
+#      running. Returns in ~0.2s once the node is up.
+#
+#      This runs as a local_action on purpose. An Ansible task-level "until" loop does not
+#      retry a result marked unreachable, which is exactly how a not-yet-listening node
+#      fails, so the probe must be a local command whose failure is just a non-zero rc.
+#
+#   2. ipinfusion.ocnos.ocnos_command over the real transport. Stage 1 only proves the shell
+#      is alive; this proves the collection can open a network_cli session and get an answer,
+#      which is what the deploy actually needs. By the time it runs, stage 1 has established
+#      that a connection is possible, so it is not exposed to the unreachable-retry problem.
+#
+# A PTY probe ("printf 'show version' | ssh -tt ...") was tried and rejected: it returns the
+# right answer but ssh -tt does not exit afterwards, so every call burns the full timeout.
+#
+---
+- name: Wait for the {{ inventory_hostname }} SSH server and CLI shell
+  local_action:
+    module: shell
+    cmd: >-
+      timeout 20 sshpass -p '{{ ansible_ssh_pass }}'
+      ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -o LogLevel=ERROR -o ConnectTimeout=10
+      {{ ansible_user }}@{{ ansible_host|default(inventory_hostname) }} 'show version' 2>&1
+      | grep -q cmlsh
+  changed_when: False
+  failed_when: False
+  register: ocnos_shell_ready
+  until: ocnos_shell_ready.rc == 0
+  retries: "{{ netlab_check_retries|default(60) }}"
+  delay: "{{ netlab_check_delay|default(10) }}"
+
+- name: Confirm {{ inventory_hostname }} SSH server came up
+  assert:
+    that: ocnos_shell_ready.rc == 0
+    fail_msg: >-
+      {{ inventory_hostname }} never started its SSH server. "docker logs
+      {{ hostname|default(inventory_hostname) }}" will say why; an OcNOS vrnetlab VM that is
+      simply slow needs a larger netlab_check_retries.
+
+- name: Wait for the {{ inventory_hostname }} CLI to answer a command
+  ipinfusion.ocnos.ocnos_command:
+    commands:
+    - show version
+    wait_for:
+    # Present in every OcNOS edition (SP / SP-PLUS / DC) and not tied to a release, so this
+    # does not need revisiting on an image bump:
+    #   Software Product: OcNOS-SP, Version: 7.0.0
+    - result[0] contains Software Product
+    retries: 30
+    interval: 10
