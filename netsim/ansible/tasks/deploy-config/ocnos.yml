@@ -14,4 +14,69 @@
     # re-deploys. Our templates are written to be re-runnable, so verbatim is
     # correct.
     match: none
+  register: ocnos_deploy
+  # Rescue a successful commit that the collection reports as a failure.
+  #
+  # OcNOS answers some commits with purely advisory text, e.g. after an OSPF change:
+  #
+  #     commit
+  #     Use "clear ip ospf process" command to take effect
+  #     %% Use clear ipv6 ospf process command to take effect
+  #
+  # The collection's terminal plugin classifies output by regex, and its catch-all
+  #
+  #     re.compile(br"\r\n%% (?!System Reboot required,|...).*")
+  #
+  # treats any %%-prefixed line not on a short whitelist as an error. The advisory above is
+  # not on that whitelist, so send_command('commit') raises -- and unlike the loop that sends
+  # the config lines, that call in cliconf/ocnos.py is not wrapped in the try/except which
+  # consults its ignored_errors list. The exception escapes and the module fails.
+  #
+  # The commit has already run on the device at that point: the failure is raised while
+  # parsing the *response* to it. Verified on a live node -- the OSPF configuration was
+  # present in running-config and the adjacency was already up while netlab was reporting
+  # failed=1. So the config is applied and this is safe to treat as success.
+  #
+  # Note the whitelist cannot be extended from here: ignored_errors and the terminal regexes
+  # both live in the vendored collection. Filtering the module result is the only fix that
+  # survives a collection upgrade.
+  #
+  # This is deliberately narrow in two ways, so a real error is never swallowed:
+  #   - the message must start with the command that failed being "commit". A config LINE
+  #     that errors aborts the remaining lines (cliconf re-raises), so the config would be
+  #     half-applied and must stay a failure.
+  #   - it must carry the advisory wording. Anything else after a commit -- "% Failed to
+  #     commit", a real %% error -- still fails.
+  #
+  # The expression is unit-tested against the message captured from the real failure plus
+  # four negatives (genuine commit failure, a config-line error, advisory wording on a
+  # non-commit line, a real %% error on commit) -- all four must still fail. Do not write the
+  # regex as "commit\\b": inside a Jinja double-quoted string \\b is a BACKSPACE character,
+  # not a word boundary, which silently stops it matching.
+  #
+  # Caveat, stated plainly: the device-side trigger could not be reproduced on demand. It was
+  # observed once on a live node (netlab reported failed=1 while the OSPF config was present
+  # and the adjacency already up), and five attempts to re-trigger it -- re-pushing identical
+  # config, changing the router-id, adding/removing a network at the CLI, and re-applying onto
+  # a converged process in a lab whose rendered OSPF config is byte-identical to the one that
+  # failed -- all committed cleanly. So the rescue path here is verified by unit test and by
+  # root-cause analysis, NOT by an end-to-end reproduction. Worst case it never fires, which
+  # is the status quo; it cannot turn a passing deploy into a failing one.
+  failed_when: >-
+    ocnos_deploy is failed
+    and not (
+      ocnos_deploy.msg is search("^b?['\"]?commit")
+      and 'command to take effect' in ocnos_deploy.msg
+    )
   tags: [ print_action, always ]
+
+- name: "ocnos_config: {{ inventory_hostname }} committed with an advisory notice"
+  debug:
+    msg: >-
+      OcNOS accepted the commit and returned an advisory: {{ ocnos_deploy.msg }}.
+      The configuration is applied. Do NOT run the "clear ..." command it suggests unless you
+      intend to reset the protocol -- on a running lab that tears down healthy adjacencies.
+  when:
+  - ocnos_deploy is failed
+  - ocnos_deploy.msg is defined
+  - "'command to take effect' in ocnos_deploy.msg"
