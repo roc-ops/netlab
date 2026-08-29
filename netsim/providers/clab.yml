@@ -70,6 +70,11 @@ attributes:
       runtime: str
       startup-delay: int
       restart-policy: str
+      # containerlab cap_add passthrough. A traffic generator that opens raw sockets on a
+      # lab interface (the Ostinato drone, and any packet engine like it) needs NET_ADMIN
+      # and NET_RAW; without this key netlab rejects the device definition outright with
+      # "Incorrect node attribute cap-add". Additive -- nothing else changes shape.
+      cap-add: list
       network-mode: str
       exec: { type: list, _subtype: str }
   interface:

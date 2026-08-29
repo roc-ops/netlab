@@ -1,0 +1,35 @@
+# GoBGP -- BGP route generator / injector, as a netlab daemon device.
+#
+# Modeled on netlab.tools own bird daemon (netsim/daemons/bird.yml): a Linux-container
+# BGP speaker that consumes netlab is `bgp` module (as/router-id/neighbors/af/rr/rs) and
+# renders a gobgpd config. Its purpose in the RocContLab lab is SCALE injection: it peers
+# with the DUTs, then a helper (gobgp-inject, gRPC :50051) pushes/withdraws N synthetic
+# prefixes or replays an MRT full table -- see services/gobgp/. The image is prebuilt
+# (roccontlab/gobgp), so build:False (no `netlab clab build` empty-context COPY issue).
+description: GoBGP BGP route generator / injector (gobgpd + gRPC API :50051)
+node:
+  module: [ bgp ]
+clab:
+  image: roccontlab/gobgp:4.7
+  build: False
+  group_vars:
+    docker_shell: bash
+    netlab_config_mode: sh
+  features:
+    initial:
+      roles: [ host, router ]
+      config_mode: [ sh ]
+libvirt:                        # container-only for now
+  image:
+features:
+  bgp:
+    activate_af: true
+    ipv4: true
+    ipv6: true
+    local_as: true
+    rs: true
+    rs_client: true
+    rr: true
+  initial:
+    roles: [ host, router ]
+    reload: false

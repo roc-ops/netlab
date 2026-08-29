@@ -1,0 +1,72 @@
+---
+description: Ostinato drone traffic engine (OTG-Ostinato backend, GPL drone binary)
+interface_name: eth{ifindex}
+mgmt_if: eth0
+role: host
+# The drone's own interface enumeration runs once at process start, and Ostinato's
+# gRPC/GUI control plane (port 7878) is the only supported way to program traffic --
+# netlab must never touch interface addressing or routing config on this node. Mirrors
+# ixia_c.yml's rationale for skip_config.
+skip_config: [ initial, routing ]
+features:
+  initial:
+    collect: false
+    reload: false
+    ipv4:
+      unnumbered: peer
+    ipv6:
+      lla: true
+      use_ra: true
+    roles: [ host ]
+  routing:
+    static: true   # role:host needs this to reach its default gateway; no other routing config is generated
+group_vars:
+  ansible_network_os: linux
+  ansible_connection: docker
+  ansible_user: root
+  ansible_python_interpreter: auto_silent
+  netlab_linux_distro: vanilla
+  netlab_lldp_enable: False
+  netlab_net_tools: False
+clab:
+  # 'image' at the top level of clab: (not nested under node:) becomes n.box via netlab's
+  # standard device-box resolution -- same pattern ixia_c.yml uses.
+  image: otg-drone:1.3.0-1build3
+  # Sentinel that mirrors ixia_c.yml's node_config.initial trick: giving this device ANY
+  # _node_config['initial'] entry makes augment/nodes.py's cleanup_non_ansible_config()
+  # register 'initial' in netlab_ansible_skip_module, which is the ONLY thing that
+  # suppresses tasks/deploy-module.yml's unconditional "Deploy initial configuration"
+  # play (ansible/initial-config.ansible lines 17-25 run for ALL hosts, without ever
+  # consulting the device's own skip_config list -- that's a routing/bgp/etc.-module-only
+  # guarantee, not an 'initial'-module one). Without this, 'netlab up' fails hard with
+  # "Cannot find initial configuration template for linux" on this host-like device.
+  # skip_config: [initial, ...] above then filters this same entry back out of
+  # clab.config_templates in providers/clab/binds.py's add_config_filemaps(), so no actual
+  # script ever gets generated or executed -- the ':ns' value itself is inert, only its
+  # presence as a key matters. Discovered + verified during Plan 2 Task 4 bring-up.
+  node_config:
+    initial: :ns
+  node:
+    kind: linux
+    # Ostinato's drone enumerates interfaces once at process start; containerlab attaches
+    # data links (eth1) after the container is already running, so the stock CMD ["drone"]
+    # races the link attach and never sees eth1. Wait for it before exec'ing drone. Proven
+    # in Task 1 (~/otg/netlab/ostinato-spike/ostinato.clab.yml).
+    #
+    # Keys nested under clab.node.* in a netlab device file get flattened into the actual
+    # per-node node.clab.* attribute namespace used by the clab.j2 render template and by
+    # providers/clab/binds.py (confirmed empirically against ixia_c.yml's clab.node.kind /
+    # clab.node.config_templates, and reproduced here with clab.node.cmd rendering
+    # correctly as a top-level 'cmd:' in the generated clab.yml). Keys placed directly at
+    # clab.<key> (not nested under node:) do NOT reach node.clab.<key> this way -- 'cmd' at
+    # the top level was silently dropped in testing.
+    cmd: sh -c "while [ ! -e /sys/class/net/eth1 ]; do sleep 0.2; done; exec drone"
+    # The drone needs NET_ADMIN + NET_RAW to see/use eth1 (Task 1). netlab core now
+    # supports cap-add passthrough (Plan 2 Task 4a: providers/clab.yml attributes.node._keys
+    # extended, additive, upstream-worthy -- see ~/otg/netlab/core-patches/clab-cap-add.patch).
+    cap-add: [ NET_ADMIN, NET_RAW ]
+  group_vars:
+    ansible_connection: docker
+    ansible_user: root
+    netlab_linux_distro: vanilla
+graphite.icon: server

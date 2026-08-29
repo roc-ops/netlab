@@ -1,0 +1,51 @@
+description: Ostinato REST gateway (OTG-face controller; translates OTG -> Ostinato drone RPC)
+interface_name: eth{ifindex}
+mgmt_if: eth0
+role: host
+# The gateway has no data-plane links of its own -- it only ever talks over the
+# management network: inbound OTG REST on :8080 from the test driver, outbound
+# drone gRPC to the ostinato engine's :7878 (DRONE_HOST/DRONE_PORT, set per-node
+# in the example topology's clab.env). Mirrors ixia_c.yml/ostinato.yml's
+# rationale for skip_config -- netlab must never touch interface addressing or
+# routing config on this node; there IS no data interface to touch.
+skip_config: [ initial, routing ]
+features:
+  initial:
+    collect: false
+    reload: false
+    ipv4:
+      unnumbered: peer
+    ipv6:
+      lla: true
+      use_ra: true
+    roles: [ host ]
+  routing:
+    static: true   # role:host needs this to reach its default gateway; no other routing config is generated
+group_vars:
+  ansible_network_os: linux
+  ansible_connection: docker
+  ansible_user: root
+  ansible_python_interpreter: auto_silent
+  netlab_linux_distro: vanilla
+  netlab_lldp_enable: False
+  netlab_net_tools: False
+clab:
+  # 'image' at the top level of clab: (not nested under node:) becomes n.box via netlab's
+  # standard device-box resolution -- same pattern ixia_c.yml/ostinato.yml use.
+  image: roccontlab/otg-ostinato-gw:1.3.0
+  # Sentinel that mirrors ixia_c.yml's node_config.initial trick (see ostinato.yml for the
+  # full explanation): without ANY _node_config['initial'] entry, netlab's
+  # ansible/initial-config.ansible unconditionally runs the 'initial' module against every
+  # host (it never consults skip_config for that one module), and this host-like device has
+  # no real initial.j2 template -- 'netlab up' fails hard. This entry gets netlab to
+  # register 'initial' in netlab_ansible_skip_module; skip_config below then filters the
+  # same entry back out of clab.config_templates, so no script actually runs either.
+  node_config:
+    initial: :ns
+  node:
+    kind: linux
+  group_vars:
+    ansible_connection: docker
+    ansible_user: root
+    netlab_linux_distro: vanilla
+graphite.icon: server

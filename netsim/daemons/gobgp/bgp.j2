@@ -1,0 +1,72 @@
+#!/bin/bash
+# netlab `bgp` module render for the GoBGP daemon device (config_mode: sh).
+# Rebuilds /etc/gobgp/gobgpd.toml from netlab is computed BGP data model, then
+# (re)starts gobgpd with the gRPC API on :50051. Routes themselves are injected at
+# runtime with gobgp-inject -- this only establishes the sessions.
+set -e
+CFG=/etc/gobgp/gobgpd.toml
+
+cat > "$CFG" <<TOML
+[global.config]
+  as = {{ bgp.as }}
+{% if bgp.router_id is defined %}
+  router-id = "{{ bgp.router_id }}"
+{% endif %}
+{% if bgp.rr|default(False) and bgp.rr_cluster_id|default(False) %}
+  # route-reflector cluster
+{% endif %}
+TOML
+
+{% for n in bgp.neighbors|default([]) %}
+{%   set peer = n.ipv4 if n.ipv4 is defined and n.ipv4 is string else (n.ipv6 if n.ipv6 is defined and n.ipv6 is string else none) %}
+{%   if peer %}
+cat >> "$CFG" <<TOML
+
+[[neighbors]]
+  [neighbors.config]
+    neighbor-address = "{{ peer }}"
+    peer-as = {{ n.as }}
+{%     if n.name is defined %}
+    description = "{{ n.name }}"
+{%     endif %}
+{%     if n.rr_client|default(False) %}
+  [neighbors.route-reflector.config]
+    route-reflector-client = true
+{%       if bgp.rr_cluster_id|default(False) %}
+    route-reflector-cluster-id = "{{ bgp.rr_cluster_id }}"
+{%       endif %}
+{%     endif %}
+{%     if n.rs_client|default(False) or bgp.rs|default(False) %}
+  [neighbors.route-server.config]
+    route-server-client = true
+{%     endif %}
+{%     if n.activate.ipv4|default(n.ipv4 is defined) %}
+  [[neighbors.afi-safis]]
+    [neighbors.afi-safis.config]
+      afi-safi-name = "ipv4-unicast"
+{%     endif %}
+{%     if n.activate.ipv6|default(n.ipv6 is defined) %}
+  [[neighbors.afi-safis]]
+    [neighbors.afi-safis.config]
+      afi-safi-name = "ipv6-unicast"
+{%     endif %}
+TOML
+{%   endif %}
+{% endfor %}
+
+# Apply the config. gobgpd runs as the container CMD (PID 1) and re-reads
+# /etc/gobgp/gobgpd.toml on SIGHUP, applying neighbor add/del diffs -- a restart
+# would fail (the running gobgpd already holds :50051/:179) or kill the container.
+pid=""
+for d in /proc/[0-9]*; do
+  [ -r "$d/comm" ] || continue
+  read c < "$d/comm" 2>/dev/null || continue
+  if [ "$c" = gobgpd ]; then pid="${d#/proc/}"; break; fi
+done
+if [ -n "$pid" ]; then
+  kill -HUP "$pid"
+else
+  nohup gobgpd -f "$CFG" --api-hosts 0.0.0.0:50051 >/var/log/gobgpd.log 2>&1 &
+fi
+sleep 1
+echo "gobgpd reloaded with $(grep -c \[\[neighbors\]\] "$CFG") neighbor(s)"

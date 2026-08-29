@@ -1,0 +1,51 @@
+---
+description: Keysight ixia-c-one traffic generator (OTG)
+interface_name: eth{ifindex}
+mgmt_if: eth0
+role: host
+# ixia-c-one's own postdeploy step reparents each data interface (eth1, ...) into a nested
+# ixia-c-traffic-engine sub-container moments after containerlab deploy returns -- by the time
+# 'netlab initial' would run, the interface no longer exists in this container's own netns/shell
+# at all. netlab must never touch interface addressing or push routing config here; the OTG API
+# (:8443) is the only supported configuration path. skip_config below suppresses both the
+# host-side 'ip addr/route' script (module: initial) and the role:host default-route static
+# routing config (module: routing) that role:host would otherwise generate/deploy.
+skip_config: [ initial, routing ]
+features:
+  initial:
+    collect: false
+    reload: false
+    ipv4:
+      unnumbered: peer
+    ipv6:
+      lla: true
+      use_ra: true
+    roles: [ host ]
+  routing:
+    static: true   # role:host needs this to reach its default gateway; no other routing config is generated
+group_vars:
+  ansible_network_os: linux
+  ansible_connection: docker
+  ansible_user: root
+  ansible_python_interpreter: auto_silent
+  netlab_linux_distro: vanilla
+  netlab_lldp_enable: False
+  netlab_net_tools: False
+clab:
+  node_config:
+    initial: :ns
+  features:
+    initial:
+      roles: [ host ]
+      config_mode: [ sh ]
+  image: ghcr.io/open-traffic-generator/ixia-c-one:1.32.0-1
+  mtu: 1500
+  node:
+    kind: keysight_ixia-c-one
+    config_templates:
+      hosts: /etc/hosts:shared
+  group_vars:
+    ansible_connection: docker
+    ansible_user: root
+    netlab_linux_distro: vanilla
+graphite.icon: server
