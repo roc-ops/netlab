@@ -18,12 +18,19 @@
     VLAN (vlans.<name>.vtep_list), so the VLANs are grouped by their VTEP list and one bundle is
     rendered per distinct list -- the exact shape ArcOS documents for that case.
 #}
-{% if vxlan.flooding|default('static') != 'evpn' %}
+{#  Attaching L2VNIs to an existing BGP EVPN instance (vxlan.bgp_instance) IS the EVPN
+    flooding model, whatever vxlan.flooding says. netlab defaults flooding to `static`,
+    so without this a fabric lab silently took the static-vxlan bundle path: it lost the
+    BGP-CORE binding (no type-2 routes, nothing forwards between switches) AND emitted
+    `overlay static-vxlan true`, which the device then uses to REFUSE advertise-mac-routes
+    outright -- the two models are mutually exclusive on ArcOS. #}
+{% set _evpn = vxlan.flooding|default('static') == 'evpn' or vxlan.bgp_instance is defined %}
+{% if not _evpn %}
 overlay static-vxlan true
 {% endif %}
 overlay local-tunnel-endpoint 0 source-interface {{ vxlan.vtep_interface|default('loopback0') }}
 #COMMIT
-{% if vxlan.flooding|default('static') == 'evpn' %}
+{% if _evpn %}
 {%   for vname in vxlan.vlans|default([]) %}
 network-instance vlan{{ vlans[vname].id }} vni {{ vlans[vname].vni }} local-tunnel-endpoint-id 0
 {#   Bind the L2VNI into an EXISTING BGP EVPN instance. Without this the VNI is UP in
