@@ -244,8 +244,16 @@ clab:
           community:
             standard: true
     tunnel:
-      gre: true              # tunnel.gre plugin: kernel ip_gre/ip6_gre, FRR-delegated bash
-                             # template (extra/tunnel/gre/frr.j2) -- reused as-is, no override
+      # The value is a LIST of the transport capabilities claimed, not a bool: the tunnel
+      # plugins call _p2p.feature_check(..., f_value=<af>), which tests membership. A bare
+      # `true` passes the base check and then fails the transport-AF check with
+      # "Device sonic (node s1) does not support GRE tunnels over ipv4" -- see frr.yml, which
+      # declares `gre: [ vrf, ipv4, ipv6 ]`. Only ipv4 is claimed here: that is what
+      # tests/integration/platform/sonic/27-tunnel-gre.yml exercises (kernel ip_gre, ping
+      # across the tunnel IPs, 0% loss). GRE over IPv6 and GRE in a transport VRF have never
+      # been run on this image, so they are not claimed.
+      gre: [ ipv4 ]          # tunnel.gre plugin: kernel ip_gre, FRR-delegated bash template
+                             # (extra/tunnel/gre/frr.j2) -- reused as-is, no override
     initial:
       collect: true             # ansible_connection: docker unblocks this (no sshd needed)
     # Repeated from the global features above: FRR declares clab.features.services as a dict,
