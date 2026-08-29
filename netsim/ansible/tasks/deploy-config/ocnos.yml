@@ -54,14 +54,28 @@
   # regex as "commit\\b": inside a Jinja double-quoted string \\b is a BACKSPACE character,
   # not a word boundary, which silently stops it matching.
   #
-  # Caveat, stated plainly: the device-side trigger could not be reproduced on demand. It was
-  # observed once on a live node (netlab reported failed=1 while the OSPF config was present
-  # and the adjacency already up), and five attempts to re-trigger it -- re-pushing identical
-  # config, changing the router-id, adding/removing a network at the CLI, and re-applying onto
-  # a converged process in a lab whose rendered OSPF config is byte-identical to the one that
-  # failed -- all committed cleanly. So the rescue path here is verified by unit test and by
-  # root-cause analysis, NOT by an end-to-end reproduction. Worst case it never fires, which
-  # is the status quo; it cannot turn a passing deploy into a failing one.
+  # Verification, stated precisely. Three layers, because the device-side trigger could not
+  # be reproduced on demand -- five attempts committed cleanly (re-pushing identical config,
+  # changing the router-id, adding/removing a network at the CLI, and re-applying onto a
+  # converged process in a lab whose rendered OSPF config is byte-identical to the one that
+  # failed):
+  #
+  #   1. The expression is unit-tested against the message captured from the real failure
+  #      plus four negatives (genuine commit failure, config-line error, advisory wording on
+  #      a non-commit line, real %% error on commit) -- all four still fail.
+  #   2. A REAL commit failure was driven end to end on a live node (a secondary address
+  #      overlapping another interface) and correctly stayed failed: failed_when_result
+  #      true, failed=1. So this does not swallow genuine errors on real hardware.
+  #   3. The rescue path itself was driven end to end by temporarily retargeting the two
+  #      conditions at that same reproducible failure: the task was rescued (failed=0) and
+  #      the notice below fired. That test is what caught the when: clause below -- it
+  #      originally also required 'ocnos_deploy is failed', which failed_when has already
+  #      cleared by the time it is evaluated, so the operator warning could never print.
+  #      A unit test could not have found that.
+  #
+  # What remains unverified in situ is only the exact advisory wording, which is quoted
+  # above verbatim from the real incident. Worst case the rescue never fires, which is the
+  # status quo; it cannot turn a passing deploy into a failing one.
   failed_when: >-
     ocnos_deploy is failed
     and not (
@@ -77,6 +91,5 @@
       The configuration is applied. Do NOT run the "clear ..." command it suggests unless you
       intend to reset the protocol -- on a running lab that tears down healthy adjacencies.
   when:
-  - ocnos_deploy is failed
   - ocnos_deploy.msg is defined
   - "'command to take effect' in ocnos_deploy.msg"
