@@ -282,8 +282,12 @@ clab:
       # tests/integration/platform/sonic/27-tunnel-gre.yml exercises (kernel ip_gre, ping
       # across the tunnel IPs, 0% loss). GRE over IPv6 and GRE in a transport VRF have never
       # been run on this image, so they are not claimed.
-      gre: [ ipv4 ]          # tunnel.gre plugin: kernel ip_gre, FRR-delegated bash template
-                             # (extra/tunnel/gre/frr.j2) -- reused as-is, no override
+      # Both transports are claimed on DEPLOY evidence, not on FRR's declaration: an IPv4
+      # underlay builds a real ip_gre netdev and an IPv6 underlay a real ip6gre netdev, and
+      # v4 and v6 traffic was carried across each with 0% loss. 'vrf' is deliberately NOT
+      # claimed -- a GRE tunnel in a transport VRF has never been run on this image.
+      gre: [ ipv4, ipv6 ]    # tunnel.gre plugin: kernel ip_gre/ip6_gre, FRR-delegated bash
+                             # template (extra/tunnel/gre/frr.j2) -- reused as-is, no override
     initial:
       collect: true             # ansible_connection: docker unblocks this (no sshd needed)
     # Repeated from the global features above: FRR declares clab.features.services as a dict,
