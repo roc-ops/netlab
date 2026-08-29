@@ -156,12 +156,27 @@ fi
 # Rest of initial configuration done through VTYSH
 # Make sure it's ready
 #
-if vtysh -c 'show running' >/dev/null; then
-  echo vtysh is ready
-else
-  echo 'giving vtysh some more time :('
-  sleep 5
-fi
+# WAIT until every enabled daemon actually SERVES vtysh. A single try plus a fixed sleep is not
+# a gate: this runs right after FRR was restarted with a possibly-different daemon set (bgpd is
+# commonly being enabled for the FIRST time just above), and a daemon REGISTERS with vtysh well
+# before it will service commands. The old form also sent stdout to /dev/null, so the very error
+# that matters passed silently.
+#
+# When bgpd is not serving yet, the next script (03-bgp.sh) fails on its opening line:
+#     line 3: Failure to communicate[13] to bgpd, line: no router bgp
+#     [bgpd] Configuration file[/etc/frr/frr.conf] processing failure: 13
+# and vtysh abandons the WHOLE file, so `netlab up` aborts with "bgp configuration ... failed"
+# on a lab that is otherwise healthy. Re-running `netlab initial` then succeeds -- by then the
+# daemons are long up -- which is what disguises this race as a flake.
+#
+# `show running-config` makes vtysh collect config from EVERY connected daemon, so it keeps
+# failing until they all answer: exactly the condition the following scripts need, and read-only.
+timeout 120 bash -c '
+  until out=$(vtysh -c "show running-config" 2>&1) && ! echo "$out" | grep -q "Failure to communicate"; do
+    sleep 1
+  done
+' && echo "vtysh and the FRR daemons are ready" \
+  || echo "WARNING: FRR daemons still not serving vtysh after 120s -- the config push may fail"
 #
 # And now let's configure the interfaces
 #
