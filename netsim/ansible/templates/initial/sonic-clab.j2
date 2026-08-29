@@ -115,12 +115,18 @@ else
 fi
 {%     endif %}
 {%   endif %}
-{#   Set the MTU on the kernel netdev, not through "config interface mtu": on the interfaces
-     containerlab injects for netlab links that command writes CONFIG_DB and never reaches the
-     netdev, exactly like the routed-port IPs below -- measured, the interface stayed at 9500
-     while CONFIG_DB claimed otherwise. The value is netlab MTU with no adjustment:
-     docker-sonic-vs programs it literally (1548 in -> 1548 on the netdev), so the +48 this
-     used to add left every interface 48 bytes above its peers and stalled OSPF in ExStart. #}
+{#   Set the MTU on the kernel netdev with "ip link set", NOT through "config interface mtu".
+     On the interfaces containerlab injects for netlab links, "config interface mtu" writes
+     CONFIG_DB and never reaches the netdev -- measured on a live node: CONFIG_DB reported 1548
+     while the interface was still at 1500.
+
+     "ip link set" DOES reach the netdev, and it programs the value literally, so the value
+     passed here is netlab's MTU with no adjustment. An earlier version of this template added
+     +48 to compensate for the CONFIG_DB path; that adjustment was doubly wrong -- the write it
+     compensated for never landed, and where a write does land it needs no compensation, so a
+     +48 would leave every interface 48 bytes above its peers and stall OSPF in ExStart.
+     Verified: "ip link set ... mtu 9000" on a jumbo link yields netdev MTU 9000 on both ends
+     and an OSPF adjacency that reaches Full. #}
 {#   L2 switchports (LAG members and VLAN access/trunk ports) reject a direct MTU set once
      they are members ("'interface_name' is in portchannel!" / "is in vlan"); the
      PortChannel/port MTU propagates, so skip them #}
