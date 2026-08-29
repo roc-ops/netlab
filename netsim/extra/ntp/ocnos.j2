@@ -12,11 +12,15 @@
 
   WHY THERE IS NO `ntp enable vrf management` HERE, though the guide lists it: OcNOS ships
   with NTP already enabled, and re-issuing the command on a device where it is already on
-  answers "%% Given configuration already exists", which the deploy task treats as a failure
-  and which aborts `netlab up` for the whole lab. Verified on a live node: `feature ntp` and
-  `ntp server` are both idempotent (re-applying either is clean), `ntp enable` is not. If you
-  ever meet an OcNOS build that ships with NTP disabled, this template will need it back --
-  guarded, not unconditional.
+  answers "%% Given configuration already exists", which the deploy task treats as a failure.
+  That fails `netlab up` as a COMMAND -- it exits non-zero and stops before the lab is usable.
+  It does NOT abort the Ansible play: there is no `any_errors_fatal` anywhere in
+  netsim/ansible, so every other host finishes its own configuration first. The lab is left
+  half-configured rather than untouched, which is the more annoying of the two outcomes.
+
+  Verified on a live node: `feature ntp` and `ntp server` are both idempotent (re-applying
+  either is clean), `ntp enable` is not. If you ever meet an OcNOS build that ships with NTP
+  disabled, this template will need it back -- guarded, not unconditional.
 
   VRF: OcNOS runs NTP on the management VRF by default, and netlab's OcNOS management
   interface is eth0 in `vrf management` -- the same VRF the initial template already uses for
@@ -50,3 +54,4 @@
 feature ntp vrf management
 !
 ntp server {{ _mgmt_pool | ipaddr('1') | ipaddr('address') }} vrf management
+

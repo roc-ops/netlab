@@ -31,3 +31,4 @@
 #}
 {% set _mgmt_pool = addressing.mgmt.ipv4 if addressing is defined else pools.mgmt.ipv4 %}
 ntp server {{ _mgmt_pool | ipaddr('1') | ipaddr('address') }} use-vrf management
+
