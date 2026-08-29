@@ -22,6 +22,6 @@ vrfs:
   red:
 nodes: [ s1, s2 ]
 links:
-  - s1:
-    s2:
-    vrf: red
+- s1:
+  s2:
+  vrf: red

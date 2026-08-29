@@ -7,6 +7,6 @@ defaults:
 module: [ ospf, bfd ]
 nodes: [ s1, s2 ]
 links:
-  - s1:
-    s2:
-    ospf.bfd: True
+- s1:
+  s2:
+  ospf.bfd: True

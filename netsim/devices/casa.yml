@@ -24,7 +24,7 @@ clab:
 libvirt:
   image: none
 external:
-  image: none                            # external config-gen mode (later phase)                            # external only — not deployable
+  image: none                            # external only -- config-gen mode, not deployable
 
 group_vars:
   ansible_network_os: casa               # selects the netsim/ansible/templates/*/casa.j2 render path

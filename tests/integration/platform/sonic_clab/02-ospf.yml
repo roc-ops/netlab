@@ -8,5 +8,5 @@ defaults:
 module: [ ospf ]
 nodes: [ s1, s2 ]
 links:
-  - s1:
-    s2:
+- s1:
+  s2:
