@@ -1,11 +1,10 @@
-# 2-node SONiC (clab) OSPF smoke test — issue #40.
 provider: clab
 plugin: [ multilab ]
 defaults:
-  device: sonic_clab
+  device: sonic
   multilab:
     id: 52
-module: [ ospf ]
+module: [ ripv2 ]
 nodes: [ s1, s2 ]
 links:
 - s1:

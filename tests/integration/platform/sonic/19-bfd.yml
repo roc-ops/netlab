@@ -1,11 +1,12 @@
 provider: clab
 plugin: [ multilab ]
 defaults:
-  device: sonic_clab
+  device: sonic
   multilab:
     id: 52
-module: [ ripv2 ]
+module: [ ospf, bfd ]
 nodes: [ s1, s2 ]
 links:
 - s1:
   s2:
+  ospf.bfd: True

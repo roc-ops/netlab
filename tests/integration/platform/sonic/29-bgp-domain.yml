@@ -21,7 +21,7 @@
 provider: clab
 plugin: [ multilab, bgp.domain ]
 defaults:
-  device: sonic_clab
+  device: sonic
   multilab:
     id: 52
 

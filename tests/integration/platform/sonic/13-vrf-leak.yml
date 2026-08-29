@@ -4,7 +4,7 @@
 provider: clab
 plugin: [ multilab ]
 defaults:
-  device: sonic_clab
+  device: sonic
   multilab:
     id: 52
 module: [ vrf, bgp ]

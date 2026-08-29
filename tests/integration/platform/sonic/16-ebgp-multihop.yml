@@ -10,7 +10,7 @@
 provider: clab
 plugin: [ multilab, ebgp.multihop ]
 defaults:
-  device: sonic_clab
+  device: sonic
   multilab:
     id: 52
 

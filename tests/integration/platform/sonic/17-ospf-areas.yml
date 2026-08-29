@@ -3,7 +3,7 @@
 provider: clab
 plugin: [ multilab, ospf.areas ]
 defaults:
-  device: sonic_clab
+  device: sonic
   multilab:
     id: 52
 module: [ ospf ]

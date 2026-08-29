@@ -10,7 +10,7 @@
 provider: clab
 plugin: [ multilab, evpn.multihoming ]
 defaults:
-  device: sonic_clab
+  device: sonic
   multilab:
     id: 52
 
