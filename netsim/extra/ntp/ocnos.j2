@@ -34,7 +34,11 @@
   sync. The presence of the config is not evidence that it worked.
 #}
 {#
-  ---- SHARED NOTE (kept in both ntp templates) --------------------------------------------
+  ---- SHARED NOTE (mirrored in lab/ntp/nxos.j2 in the RocContLab repo) ---------------------
+  The nxos sibling of this template lives in the RocContLab repo, not here, because its
+  DEFAULT has to be box-level -- see netsim/defaults/roc-ntp.yml for why the two halves are
+  split by device ownership. Keep the two notes below in step if you edit either.
+
   THE SERVER ADDRESS IS DERIVED, NOT HARD-CODED. It is the lab's management gateway, which on
   any netlab host is the host itself -- the box where chronyd runs. Deriving it keeps this
   correct under any multilab id (the mgmt network is 192.168.<id>.0/24) and on any netlab

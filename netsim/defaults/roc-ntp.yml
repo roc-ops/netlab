@@ -1,44 +1,51 @@
 #
-# NTP as a lab default -- fork-only.
+# NTP as a lab default -- the OcNOS half. Fork-only, and that is the point.
 #
-# WHY THIS EXISTS
-#   We correlate logs across five NOSes plus the physical fabric. A device whose clock is
-#   minutes out makes that correlation guesswork, and an evening was lost to exactly that.
-#   This file makes the affected devices point at the lab's time server with no per-topology
-#   opt-in: any topology built on this fork gets it.
+# WHY THIS FILE ONLY NAMES ocnos
+#   The nxos half of this default deliberately does NOT live here. It lives in the RocContLab
+#   repo (lab/netlab.yml -> ~/.netlab.yml), and the split is by DEVICE OWNERSHIP, not by taste:
 #
-# WHY ONLY THESE TWO DEVICES -- read before adding more
-#   Container-based devices (frr, linux, sonic, eos/cEOS, srlinux, dnos, arcos ...) share the
-#   HOST KERNEL CLOCK. There is no time namespace, so they cannot drift from the netlab host
-#   and cannot be configured to, and without CAP_SYS_TIME a container could not step its clock
-#   even if asked. Measured on the ml-20 showcase: the host and all seven container platforms
-#   reported the SAME SECOND (20:55:48 UTC, 2026-08-29). Configuring NTP on them would be
-#   ceremony that LOOKS like the problem is solved. Their absence here is a deliberate,
-#   measured finding, not an oversight -- see docs/lab/10-time.md before "fixing" it.
+#     * `ocnos` is a FORK device -- it exists only in trees that carry this file, so a default
+#       naming it can only ever be seen by a netlab that knows what it is. It also appears in
+#       ZERO files of the upstream transformation-test corpus, so defaulting it changes no
+#       expected output and breaks no test. Verified: 295 passed, 1 skipped.
 #
-#   The devices listed below are VM-BACKED (vrnetlab wraps a QEMU VM), so each has its OWN
-#   clock and does drift. Measured on a live n9kv: host 21:00:00 UTC, VM 20:55:52 UTC --
-#   4m08s out, while NX-OS itself reported "Time source is NTP" with no server configured.
+#     * `nxos` is an UPSTREAM device with upstream fixtures. Defaulting it HERE adds
+#       `config: [ntp]` to the transformed output of six upstream test cases
+#       (tests/topology/expected/{bgp-ibgp,dual-stack,eigrp-feature-test,isis-feature-test,
+#       ospf,unnumbered}.yml -- 8 node blocks, 16 lines) and fails the suite by construction.
+#       That corpus is generated from upstream's own inputs; a fork default makes it wrong.
 #
-# HOW IT IS SCOPED
-#   `devices.<dev>.node.config` is copied into every node of that device type by
-#   augment/nodes.py:augment_node_device_data. That scopes the setting to the platform, which
-#   a group cannot do -- group membership is by node NAME, and a `groups.all` default would
-#   demand an ntp template for EVERY platform (a missing one is a hard error at `netlab
-#   create`, not a skip).
+#   The rule worth remembering, because it is not obvious and it cost a merge:
+#   A FORK-LEVEL DEFAULT ON A FORK-ONLY DEVICE COSTS NOTHING. A FORK-LEVEL DEFAULT ON AN
+#   UPSTREAM DEVICE MAKES UPSTREAM'S GENERATED FIXTURES WRONG.
 #
-#   Note the merge rule: the device default applies only when the node does not already have
-#   a `config` attribute ("if not k in n"). A topology that sets its own `config:` on one of
-#   these nodes therefore REPLACES this default rather than adding to it, and that node gets
-#   no NTP. That is the documented escape hatch, but it is silent -- if you set `config:` on
-#   an nxos or ocnos node, list `ntp` yourself.
+#   The converse is just as sharp, and is why nxos went to the box rather than everything:
+#   a BOX-LEVEL default naming a FORK device breaks EVERY lab run from a tree that does not
+#   define it -- including labs with no such node. `devices.ocnos.node.config` in
+#   ~/.netlab.yml creates a partial defaults.devices.ocnos entry, and netlab validates every
+#   device in that dictionary regardless of what the topology uses:
+#       IncorrectValue in devices: Device ocnos ... does not have interface_name attribute
+#   A two-node FRR topology fails on that. So ocnos must be defaulted HERE, next to the
+#   device definition, and nowhere else.
 #
-# ON A NETLAB HOST THAT DOES NOT SERVE TIME
-#   The templates point at the lab's management gateway, which is always the netlab host. If
-#   that host does not run an NTP server, this configures a client aimed at nothing: the
-#   device simply does not synchronise. No error, no breakage -- and no signal either, which
-#   is the trap. `show ntp peer-status` (OcNOS) / `show ntp peers` (NX-OS) is how you tell,
-#   and docs/lab/10-time.md records what serving requires.
+# WHY ONLY VM-BACKED DEVICES GET NTP AT ALL
+#   Container devices (frr, linux, sonic, eos, srlinux, dnos, arcos ...) share the HOST KERNEL
+#   CLOCK -- there is no time namespace, so they cannot drift from the netlab host and could
+#   not step a clock anyway without CAP_SYS_TIME. Measured on the ml-20 showcase: the host and
+#   all seven container platforms reported the SAME SECOND. Configuring NTP on them would be
+#   ceremony that LOOKS like the problem is solved. Their absence here is a measured decision,
+#   not an oversight -- see docs/lab/10-time.md before "fixing" it.
+#
+#   ocnos runs under vrnetlab, so it is a QEMU VM with its own clock. Measured: no time source
+#   at all before this, then a 1295.649 ms first-poll offset, settling to 1.66 ms.
+#
+# THE MERGE RULE THAT BITES
+#   `devices.<dev>.node.config` is copied into a node only when the node has no `config`
+#   attribute already (augment/nodes.py, `if not k in n`). A topology that sets its own
+#   `config:` on an ocnos node therefore REPLACES this default and that node silently gets no
+#   NTP -- no warning, and a node that boots looking fine. If you set `config:` on an ocnos
+#   node, list `ntp` yourself.
 #
 # `_top` is how a file under defaults/ edits the GLOBAL defaults rather than its own
 # namespace. netsim/utils/read.py:include_yaml files every included file under a key named
@@ -46,11 +53,9 @@
 # here would land in `defaults.roc-ntp.devices` and do nothing at all -- silently. `_top` is
 # merged into the parent defaults instead, which is the same idiom the modules use
 # (netsim/modules/vrf.yml, routing.yml, vlan.yml, stp.yml).
+#
 _top:
   devices:
-    nxos:
-      node:
-        config: [ ntp ]
     ocnos:
       node:
         config: [ ntp ]
