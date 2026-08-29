@@ -165,9 +165,20 @@ topology:
 {%   for n in nodes.values() if not (n.unmanaged|default(False)) %}
 {%     for nl in n.interfaces|default([]) if nl.linkindex|default(0) == l.linkindex %}
 {%       set clab = nl.clab|default({}) %}
-  - endpoints:
+{#      mtu belongs BESIDE `endpoints:`, not inside it. Emitting it after the `endpoints:`
+        key and before the list items produces
+            - endpoints:
+              mtu: 1500
+              - "mcast-src:eth1"
+        which is not valid YAML, and containerlab refuses the whole file with
+        "Failed to read topology file: yaml: line NN: did not find expected key". It only
+        showed up on a multi-endpoint (bridge) link that carries an MTU -- the two-node path
+        above already emits it in the right place. #}
 {%       if nl.mtu is defined %}
-    mtu: {{ nl.mtu }}
+  - mtu: {{ nl.mtu }}
+    endpoints:
+{%       else %}
+  - endpoints:
 {%       endif %}
     - "{{ n.name }}:{{ clab.name|default(nl.ifname) }}"
 {#
