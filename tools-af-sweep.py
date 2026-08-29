@@ -32,7 +32,12 @@ belongs in integration tests against real hardware, not here.
 
 Usage: af_sweep.py <device> [module ...]
 """
-import os, re, shutil, subprocess, sys, tempfile
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
 
 DEVICE  = sys.argv[1] if len(sys.argv) > 1 else "dnos"
 MODULES = sys.argv[2:] or ["ospf"]

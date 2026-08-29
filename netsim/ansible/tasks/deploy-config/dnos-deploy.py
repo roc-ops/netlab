@@ -21,7 +21,11 @@ production hardware without changing anything.
 The same transport reaches a cDNOS container: it answers ssh and scp on port 22 of its
 management address just as the hardware does, so only --host differs.
 """
-import argparse, os, re, subprocess, sys
+import argparse
+import os
+import re
+import subprocess
+import sys
 
 try:
   import pexpect
@@ -68,7 +72,7 @@ def scp_config(host: str, user: str, password: str, src: str, remote_name: str) 
     sys.exit(f"dnos-deploy: scp of {src} failed: {r.stderr.strip() or r.stdout.strip()}")
 
 
-def send(child, line: str, expect_pat: str, timeout: int = 120) -> str:
+def send(child: pexpect.spawn, line: str, expect_pat: str, timeout: int = 120) -> str:
   """Send a line, absorbing any confirmation prompt before the expected prompt returns."""
   child.sendline(line)
   out = ""
@@ -86,7 +90,7 @@ def send(child, line: str, expect_pat: str, timeout: int = 120) -> str:
     raise DeployError(f"timeout/EOF waiting for prompt after {line!r}\n--- got ---\n{out}")
 
 
-def discard_candidate(child) -> None:
+def discard_candidate(child: pexpect.spawn) -> None:
   """Best effort: discard the candidate and leave config mode. Never raises.
 
   Called from the failure path, so it must not be able to fail in a way that skips the rest of
@@ -101,7 +105,7 @@ def discard_candidate(child) -> None:
       pass
 
 
-def config_session(child, a, remote: str) -> str:
+def config_session(child: pexpect.spawn, a: argparse.Namespace, remote: str) -> str:
   """Everything that happens inside configuration mode.
 
   Raises DeployError on any failure; the caller guarantees the candidate is discarded. Returns
@@ -136,7 +140,7 @@ def config_session(child, a, remote: str) -> str:
   return "--- commit succeeded ---"
 
 
-def ready_probe(child) -> str:
+def ready_probe(child: pexpect.spawn) -> str:
   """Commit an empty candidate, purely to find out whether the node will accept commits yet.
 
   Raises DeployError while the node is still booting; the caller guarantees the (empty)
