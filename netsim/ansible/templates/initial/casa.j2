@@ -5,21 +5,64 @@
   netlab renders the artifact, never deploys. IPv4 = dotted netmask, IPv6 = CIDR. netlab_interfaces =
   [loopback] + interfaces (loopback first); mgmt is NOT in the list (lives in `mgmt`).
 #}
+{# netlab_manage_identity is False by default for external-provider nodes (see
+   netsim/providers/external.py): a CMTS already in service has a hostname, and
+   renaming it out from under the operator is not netlab's call. #}
+{% if netlab_manage_identity|default(True) %}
 hostname {{ inventory_hostname.replace("_","-") }}
 !
-{% for l in netlab_interfaces %}
+{% endif %}
+{# The SYSTEM loopback on a pre-existing CMTS is load-bearing (it anchors the OSPF
+   router-id and is the source-interface for logging/ipdr), and netlab's idea of it
+   is not the box's -- this Casa uses loopback 1, not loopback 0. Skip it unless
+   netlab is the owner of record. Additional loopbacks are netlab's own. #}
+{% for l in netlab_interfaces
+     if netlab_manage_identity|default(True) or l.ifname != loopback.ifname|default('') %}
 interface {{ l.ifname }}
 {% for m in l.lag_members|default([]) %}
   {{ m.port }} mode {{ m.mode }}
 {% endfor %}
-{% if l.name is defined %}
+{# On a pre-existing device the interface description belongs to the OPERATOR, and on the Casa
+   it is load-bearing: description "NETLAB: ..." is what delegates a port to netlab. Rendering
+   our own description over it un-delegates the port on the very push it was delegated for, so
+   the service would work exactly once. netlab_manage_identity already records who owns this
+   device's identity, and a description is part of that. #}
+{% if l.name is defined and netlab_manage_identity|default(True) %}
   description "{{ l.name }}{{ " ["+l.role+"]" if l.role is defined else "" }}"
+{% elif l.type|default('') == 'vlan_member' and l.parent_ifname is defined %}
+{#  A subinterface netlab CREATED carries the delegation marker, so it is delegated on the next
+    read through the same mechanism as a physical port. Without it the write path refused every
+    re-push: the interface netlab made yesterday looked like the operator's today, and `netlab
+    config` failed from the second run onwards.
+
+    This is not the case netlab_manage_identity guards. That flag exists because a description
+    on a PRE-EXISTING physical port IS the operator's delegation marker, and rendering over it
+    would un-delegate the port on the very push it was delegated for. There is no operator
+    description on an interface that did not exist a moment ago.
+
+    Kept within the guardrail's bounded description charset -- this string is sent verbatim to
+    a device with no rollback. #}
+  description "NETLAB: vlan {{ l.vlan.access_id }} subinterface on {{ l.parent_ifname }}"
 {% endif %}
+{# A VLAN subinterface needs dot1q encapsulation and a member-port line, and the vlan module
+   knows about neither -- `encapsulation`/`parent` are device-scoped NSI attributes. Without
+   them the box gets `interface vlan <id>` with an address, no encapsulation and no member
+   port: config that commits and forwards nothing. Everything required is already on the
+   interface (type == 'vlan_member', plus parent_ifname filled in during transformation), so
+   derive it. An explicit attribute still wins -- hand-written NSI config means what it says. #}
 {% if l.encapsulation is defined %}
   encapsulation {{ l.encapsulation }}
+{% elif l.type|default('') == 'vlan_member' and l.parent_ifname is defined %}
+{#  parent_ifname, not just vlan_member: the two branches must agree. vlan.py short-circuits
+    before assigning parent_ifname for a VLAN-loopback member, and gating only the member-port
+    line on it rendered `encapsulation dot1q` with no member port -- the addressed-but-dead
+    interface this change exists to prevent. #}
+  encapsulation dot1q
 {% endif %}
 {% if l.parent is defined %}
   {{ l.parent }}
+{% elif l.type|default('') == 'vlan_member' and l.parent_ifname is defined %}
+  {{ l.parent_ifname }}
 {% endif %}
 {% if l.mtu is defined %}
   mtu {{ l.mtu }}

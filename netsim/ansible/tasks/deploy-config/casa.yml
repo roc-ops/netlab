@@ -1,0 +1,52 @@
+---
+# Casa CMTS config deploy.
+#
+# There is no confd here: the Casa has NO transactional primitive -- no validate/abort, no config
+# archive, no config-change syslog (operator-confirmed). Config mode is IOS-like, so what is sent
+# is live immediately. netlab therefore MUST NOT push to this device through the generic
+# network_cli path, which would apply a rendered template to a live CMTS with nothing in front
+# of it. Every push routes through casa_push.py, which:
+#
+#   1. captures a full running-config baseline (on a box with no rollback, this is the ONLY real
+#      recovery artifact)
+#   2. writes a best-effort undo script BEFORE applying, and names the lines it could not invert
+#      rather than silently omitting them
+#   3. scans the candidate against the protected set discovered from the LIVE config -- DOCSIS
+#      plant, the management lifeline, and anything already addressed. This is the actual
+#      defence; everything after it is damage assessment, so it errs toward refusing.
+#   4. requires BOTH locks: --apply AND CASA_ALLOW_PUSH=YES (a DIFFERENT variable from the
+#      fabric's ARCOS_HW_ALLOW_PUSH -- authorising a fabric push must not silently authorise a
+#      CMTS push)
+#   5. verifies afterwards that every protected region is byte-identical
+#
+# To let netlab manage a port, delegate it ON THE DEVICE:
+#     interface xgige 6/5
+#       description "NETLAB: <what this is for>"
+# Protected-by-default is deliberate here (the opposite polarity to the ArcOS guardrail, where
+# ports default to unprotected and an operator opts INTO protection): a CMTS carries subscriber
+# plant, so the safe default is "hands off unless told otherwise".
+
+- name: Render candidate config on the controller
+  template:
+    src: "{{ config_template }}"
+    # PER-HOST path -- external nodes share the controller's /tmp, and Ansible renders for all
+    # hosts before any later task runs, so a shared path lets one host's config reach another.
+    dest: "/tmp/netlab-{{ inventory_hostname }}-{{ netsim_action }}.cfg"
+
+- name: "guardrailed push to the Casa CMTS ({{ inventory_hostname }})"
+  delegate_to: localhost
+  vars:
+    _push: "{{ lookup('env','HOME') }}/roccontlab/scripts/casa/casa_push.py"
+  command: >-
+    {{ _push }}
+    --host {{ ansible_host }}
+    --config /tmp/netlab-{{ inventory_hostname }}-{{ netsim_action }}.cfg
+    --node {{ inventory_hostname }}
+    --apply
+  register: casa_push
+  changed_when: "'applied' in casa_push.stdout"
+  failed_when: casa_push.rc != 0
+
+- name: "report"
+  debug:
+    msg: "{{ casa_push.stdout_lines }}"

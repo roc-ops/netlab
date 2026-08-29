@@ -26,6 +26,17 @@ overlay local-tunnel-endpoint 0 source-interface {{ vxlan.vtep_interface|default
 {% if vxlan.flooding|default('static') == 'evpn' %}
 {%   for vname in vxlan.vlans|default([]) %}
 network-instance vlan{{ vlans[vname].id }} vni {{ vlans[vname].vni }} local-tunnel-endpoint-id 0
+{#   Bind the L2VNI into an EXISTING BGP EVPN instance. Without this the VNI is UP in
+     silicon but never enters BGP EVPN: no type-2 MAC routes, so nothing forwards BETWEEN
+     switches. A same-switch patch still works, because that is local bridging -- which is
+     exactly how the omission hides. netlab's evpn module emits the equivalent but demands
+     the bgp module, i.e. netlab would re-render the BGP carrying the production underlay.
+     Naming the existing instance attaches the service to the fabric instead of taking it
+     over. #}
+{%     if vxlan.bgp_instance is defined %}
+network-instance vlan{{ vlans[vname].id }} advertise-mac-routes true
+network-instance vlan{{ vlans[vname].id }} protocol BGP {{ vxlan.bgp_instance }}
+{%     endif %}
 {%   endfor %}
 {% else %}
 {%   set bundles = {} %}

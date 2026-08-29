@@ -279,4 +279,18 @@ clab:
     netlab_show_command: [ bash, -c, 'f=\$(mktemp); for i in \$(seq 1 60); do echo ''show $@ | display json'' | confd_cli -C -u admin > \$f 2>/dev/null; python3 -c ''import sys,json; json.load(open(sys.argv[1]))'' \$f 2>/dev/null && { cat \$f; rm -f \$f; exit 0; }; sleep 1; done; cat \$f; rm -f \$f' ]
 external:
   image: none
+  # NOT the clab MTU. `clab.mtu: 1500` exists because a containerlab veth must be created at a
+  # known MTU; an external node is a switch that already exists, already carrying traffic, on
+  # ports the operator has already set (this fabric runs a 9900-MTU pseudowire). Inheriting the
+  # container default rendered `interface swp53 mtu 1526` onto production hardware -- the ArcOS
+  # guardrail refused it, correctly. netlab renders `mtu` only when the interface has one, so
+  # null means no line and nothing pushed. Managing MTU on a physical switch should be opted
+  # into explicitly in the topology, not inherited from a provisioning default.
+  mtu: null
+  group_vars:
+    # Physical switch: no container to exec into. Tasks run on the controller and reach the box
+    # over SSH via netlab_arcos_push.py (guardrail + two-lock gate). See
+    # netsim/ansible/tasks/deploy-config/arcos.yml.
+    ansible_connection: local
+    netlab_provider: external
 graphite.icon: router

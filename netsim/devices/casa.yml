@@ -25,6 +25,12 @@ libvirt:
   image: none
 external:
   image: none                            # external only -- config-gen mode, not deployable
+  group_vars:
+    # Physical CMTS: tasks run on the controller and reach the box through casa_push.py, which
+    # is where the guardrail and the two-lock gate live. Never network_cli -- that would apply a
+    # rendered template straight to a live CMTS with nothing in front of it.
+    ansible_connection: local
+    netlab_provider: external
 
 group_vars:
   ansible_network_os: casa               # selects the netsim/ansible/templates/*/casa.j2 render path
@@ -129,6 +135,19 @@ attributes:
         passive_active:  { type: list, _subtype: { type: str } }
 
 features:
+  # The CMTS models a tagged interface as `interface vlan <id>` with `encapsulation dot1q` and a
+  # bare member-port line -- a ROUTED subinterface, not a bridged VLAN, so model: router. Read
+  # off the live config, where VLANs 62 and 3012 already share xgige 6/0.
+  vlan:
+    model: router
+    subif_name: "vlan {vlan.access_id}"
+    # NO svi_interface_name, on purpose. That setting is consulted only for a VLAN this node
+    # BRIDGES, and the Casa has no bridging: it would render an `interface vlan <id>` with no
+    # encapsulation and no member port -- config that commits and forwards nothing. Leaving it
+    # undeclared makes netlab reject a non-routed VLAN outright instead. Every VLAN the Casa
+    # joins needs `mode: route`.
+    mixed_trunk: true
+    native_routed: false
   initial:
     ipv4: True
     ipv6: True

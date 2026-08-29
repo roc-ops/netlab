@@ -16,11 +16,18 @@
 {%   set is_phys = l.type not in ['loopback','tunnel'] %}
 {#   OSPFv2 needs no interface stanza for a loopback (covered by the network statement);
      only emit a stanza when something actually renders under it. #}
+{#   `v6` alone is not enough: netlab_manage_identity suppresses the ipv6-router line for the
+     SYSTEM loopback on a pre-existing device, which used to leave an EMPTY `interface loopback 0`
+     stanza behind. On a guarded device that is fatal, not cosmetic -- the allow-list refuses a
+     stanza for an interface netlab does not own, so one empty header makes the whole module
+     unpushable. Only count v6 when its line will actually render. #}
+{%   set v6_emits = v6 and (netlab_manage_identity|default(True)
+                            or l.ifname != loopback.ifname|default('')) %}
 {%   set emit_if = (l.ospf.network_type is defined and is_phys)
                    or l.ospf.cost is defined
                    or (l.ospf.priority is defined and is_phys)
                    or l.ospf.bfd.ipv4|default(False) or l.ospf.bfd.ipv6|default(False)
-                   or v6 %}
+                   or v6_emits %}
 {%   if emit_if %}
 interface {{ l.ifname }}
 {%   if l.ospf.network_type is defined and l.type not in ['loopback','tunnel'] %}
@@ -53,7 +60,9 @@ interface {{ l.ifname }}
 {%   if l.ospf.bfd.ipv6|default(False) %}
   ipv6 ospf bfd
 {%   endif %}
-{%   if v6 %}
+{#   Same guard as the OSPFv2 side: do not enrol the SYSTEM loopback of a device netlab did
+     not build. Without this the identity leaks through the v6 family instead. #}
+{%   if v6 and (netlab_manage_identity|default(True) or l.ifname != loopback.ifname|default('')) %}
   ipv6 router ospf {{ pid }} area {{ l.ospf.area }}
 {%   endif %}
 !
@@ -62,13 +71,19 @@ interface {{ l.ifname }}
 {# ---- OSPFv2 (IPv4): router mode + network statements ---- #}
 {% if 'ipv4' in ospf.af %}
 router ospf {{ pid }}
-{%   if ospf.router_id is defined %}
+{#   The router-id is a SINGLE value, so unlike the additive network statements below it
+     would REPLACE the production one (10.80.255.6 on this CMTS). Not netlab's to set on a
+     device it did not build. #}
+{%   if ospf.router_id is defined and netlab_manage_identity|default(True) %}
   router-id {{ ospf.router_id }}
 {%   endif %}
 {%   if ospf.reference_bandwidth is defined %}
   auto-cost reference-bandwidth {{ ospf.reference_bandwidth }}
 {%   endif %}
-{%   for l in netlab_interfaces|default([]) if 'ospf' in l and 'ipv4' in l and l.ipv4 is string %}
+{#   Skip the system loopback's network statement on a pre-existing device: netlab would be
+     advertising a loopback the box does not have. #}
+{%   for l in netlab_interfaces|default([]) if 'ospf' in l and 'ipv4' in l and l.ipv4 is string
+       and (netlab_manage_identity|default(True) or l.ifname != loopback.ifname|default('')) %}
   network {{ l.ipv4|ansible.utils.ipaddr('subnet') }} area {{ l.ospf.area }}
 {%   endfor %}
 {%   for l in netlab_interfaces|default([]) if 'ospf' in l and l.ospf.passive|default(False) %}
@@ -78,12 +93,26 @@ router ospf {{ pid }}
 {% endif %}
 {# ---- OSPFv3 (IPv6): router mode (interfaces enabled above) ---- #}
 {% if 'ipv6' in ospf.af %}
+{#- Skip an empty `router ospf6` stanza for the same reason as above: with the router-id
+    suppressed by netlab_manage_identity and no passive interfaces, the header alone would be
+    refused by a device guardrail. -#}
+{#   Emit the stanza only when something will actually go INSIDE it: a router-id we are allowed
+     to set, or at least one genuinely passive interface. The previous condition used
+     selectattr('ospf.passive','defined'), which is true for every interface that merely MENTIONS
+     the attribute -- including `ospf.passive: false` -- so it always fired and the empty stanza
+     survived. #}
+{%   set _o6 = (ospf.router_id is defined and netlab_manage_identity|default(True))
+               or netlab_interfaces|default([])|selectattr('ospf.passive','defined')|selectattr('ospf.passive','eq',True)|list %}
+{%   if _o6 %}
 router ospf6 {{ pid }}
-{%   if ospf.router_id is defined %}
+{#   Single value: it REPLACES the production router-id, so it is guarded exactly as the
+     OSPFv2 one is. #}
+{%   if ospf.router_id is defined and netlab_manage_identity|default(True) %}
   router-id {{ ospf.router_id }}
 {%   endif %}
 {%   for l in netlab_interfaces|default([]) if 'ospf' in l and 'ipv6' in l and l.ospf.passive|default(False) %}
   passive-interface {{ l.ifname }}
 {%   endfor %}
 !
+{%   endif %}
 {% endif %}
