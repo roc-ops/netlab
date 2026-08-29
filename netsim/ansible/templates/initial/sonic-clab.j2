@@ -97,7 +97,13 @@ else
   config interface ip add {{ l.ifname }} {{ addr }}
 fi
 {%   endif %}
-{%   if l.ipv6 is defined %}
+{#   The same two exclusions the IPv4 branch above applies must apply here. The SONiC 'config'
+     CLI only accepts Ethernet/PortChannel/Vlan/Loopback names, so a tunnel netdev is rejected
+     outright ("tun0 is not valid"), and a VNI-backed SVI's config_db Vlan object is
+     deliberately never created, so addressing it here fails with "does not exist". Both were
+     guarded for IPv4 and not for IPv6, so a dual-stack tunnel or a dual-stack symmetric-IRB
+     SVI failed the whole initial script on the IPv6 line. #}
+{%   if l.ipv6 is defined and l.type != 'tunnel' and not _vni_svi %}
 {%     if not (l.virtual_interface|default(False)) %}
 config interface ipv6 enable use-link-local-only {{ l.ifname }}
 {%     endif %}
