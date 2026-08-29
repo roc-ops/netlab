@@ -49,8 +49,7 @@
 | Nokia SR OS [❗](caveats-sros)    | sros    | best effort[^SROSBE]   |
 | Nokia SR-SIM [❗](caveats-srsim)  | srsim   | full          |
 | OpenBSD [❗](caveats-openbsd)     | openbsd | best effort   |
-| SONiC [❗](caveats-sonic-vm) | sonic   | minimal       |
-| Sonic (containerlab) [❗](caveats-sonic-clab-device) | sonic_clab | minimal |
+| SONiC [❗](caveats-sonic-vm)[❗](caveats-sonic-clab) | sonic   | minimal       |
 | VPP (fd.io) [❗](caveats-vpp) | vpp | minimal |
 | VyOS 1.4 [❗](caveats-vyos)       | vyos    | full          |
 
@@ -521,7 +520,7 @@ The data plane [configuration modules](module-reference.md) are supported on the
 | Nokia SR Linux        | ✅ | ✅ | ✅ | ✅ | ✅ |  ❌ |
 | Nokia SR OS[^SROS]    | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | OpenBSD               | ✅ | ❌ | ✅ | ❌  | ❌ |
-| Sonic (containerlab)  | ✅ | ✅ | ✅ | ✅ | ✅ | ✅[❗](caveats-sonic-clab) |
+| SONiC (containerlab)  | ✅ | ✅ | ✅ | ✅ | ✅ | ✅[❗](caveats-sonic-clab) |
 | VyOS                  | ✅ | ✅ | ✅ | ✅ |  ❌ |  ❌ |
 
 (platform-services-support)=

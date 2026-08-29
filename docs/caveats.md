@@ -715,53 +715,46 @@ See also [](caveats-sros) caveats for further details.
 (caveats-sonic-clab)=
 ## SONiC Container
 
-The `sonic` device also runs under *containerlab* with the community `docker-sonic-vs` image; see [](build-sonic-container) for how to obtain it and how the two deployments differ.
-
-* Configuration is deployed with **docker exec** commands, not over an SSH session.
-* `docker-sonic-vs` ships `sshd` but does not start it.
-* `srv6` is control-plane and kernel-plane only: the locator and End/End.X SIDs are advertised in the IS-IS LSDB and installed as kernel `seg6local` routes, but the end-to-end SRv6 datapath does not resolve -- the same open item as FRR/IS-IS SRv6 on other platforms.
-
-(caveats-sonic-clab-device)=
-## Sonic (containerlab)
-
-A separate device (`sonic_clab`, parent `sonic`) for the community `docker-sonic-vs` image
-running under *containerlab*, distinct from the `sonic` device above (which targets the
-Azure/libvirt SONiC VM). The two images have different internal architectures and are not
-interchangeable: `docker-sonic-vs` is a single monolithic container (FRR's `vtysh` runs
-directly in it), while the VM runs FRR inside a nested `bgp` sub-container.
+The `sonic` device also runs under *containerlab* with the community `docker-sonic-vs` image; see [](build-sonic-container) for how to obtain it and how the two deployments differ. The two are not interchangeable: `docker-sonic-vs` is a single monolithic container with FRR's `vtysh` running directly in it, while the VM runs FRR inside a nested `bgp` sub-container. Everything specific to the container lives in the `clab:` block of `devices/sonic.yml`, and the templates it needs of its own are named `<module>/sonic-clab.j2`.
 
 * You supply your own `docker-sonic-vs:latest` image (build it from the
   [sonic-buildimage](https://github.com/sonic-net/sonic-buildimage) `docker-sonic-vs` target, or
   pull a prebuilt one); *netlab* does not ship or distribute it.
-* Configuration is deployed over Ansible's built-in `docker` connection plugin (`docker exec`),
-  not `network_cli`: `docker-sonic-vs` has no cliconf-compatible CLI. The only SONiC cliconf
-  Ansible ships, `dellemc.enterprise_sonic`, targets Dell's licensed "Management Framework" CLI
-  (`sonic-cli`/klish) on Dell PowerSwitch hardware running Enterprise SONiC -- that CLI does not
-  exist on the community image (no `admin` user, no `sonic-cli`/`klish` binary anywhere in it).
-  This matches how *netlab* already drives the in-tree `frr` *containerlab* device and the
-  libvirt `sonic` device above (which has a full sshd) -- neither uses `network_cli` for this
-  vtysh-delegated render-then-push style of configuration, sshd or not.
+* Configuration is deployed with **docker exec** commands, not over an SSH session: each rendered
+  snippet is bind-mounted into the container as `/etc/config/NN-<module>.sh` and executed there.
+  Configuration collection, validation and the `netlab config` custom-template reload go through
+  Ansible's `docker` connection plugin, not `network_cli`. `network_cli` is not usable here: it
+  needs a cliconf plugin, and the only SONiC cliconf Ansible ships,
+  `dellemc.enterprise_sonic`, targets Dell's licensed Management Framework CLI
+  (`sonic-cli`/klish) on Dell PowerSwitch hardware -- that CLI does not exist on the community
+  image (no `admin` user, no `sonic-cli`/`klish` binary anywhere in it).
 * `docker-sonic-vs` ships `sshd` and host keys but starts neither `sshd` nor a login user; the
-  initial configuration bootstraps both (`admin`/`YourPaSsWoRd`, matching the `sonic` device's
-  own credentials) purely for interactive access (`netlab connect`, ad-hoc troubleshooting) --
-  SSH plays no part in configuration deployment.
+  initial configuration bootstraps both (`admin`/`YourPaSsWoRd`) purely for interactive access
+  (`netlab connect`, ad-hoc troubleshooting). SSH plays no part in configuration deployment.
 * Most FRR daemons ship disabled in `/etc/frr/daemons` by default (to save resources); the
-  initial configuration enables the ones the configured modules need and restarts FRR once.
+  initial configuration enables the ones the configured modules need, restarts FRR, and then
+  waits until every enabled daemon actually answers `vtysh` before the next module script runs.
 * MPLS/SR-MPLS labs need a one-time host prerequisite before `netlab up`: `sudo modprobe
   mpls_router mpls_iptunnel`. Once loaded, `/proc/sys/net/mpls/*` appears in every container's
   network namespace (even already-running ones), giving a real kernel MPLS label FIB
   (`ip -M route`), not just a control-plane proof.
 * Module support is broad and FRR-delegated (`ospf`, `bgp`, `isis`, `vrf`, `bfd`, `mpls`, `sr`,
-  `srv6`, `vxlan`, `evpn`, `evpn.multihoming`, `gateway`/`vrrp.version`, `ripv2`, `routing`,
-  `tunnel.gre`, `bgp.session`/`bgp.policy`/`bgp.originate`/`bgp.domain`/`ebgp.multihop`,
+  `srv6`, `vlan`, `lag`, `vxlan`, `evpn`, `evpn.multihoming`, `gateway`/`vrrp.version`, `ripv2`,
+  `routing`, `tunnel.gre`, `bgp.session`/`bgp.policy`/`bgp.originate`/`bgp.domain`/`ebgp.multihop`,
   `ospf.areas`, both IPv4 and IPv6), including a real kernel MPLS label FIB and MPLS L3VPN
   datapath, real kernel `seg6local` SRv6 routes, and a full EVPN-VXLAN symmetric-IRB (L3VNI)
-  datapath -- all live-verified; see the device's `tests/integration/platform/sonic_clab/`
-  topologies for the complete list and what each one checks.
+  datapath. See `tests/integration/platform/sonic/` for the complete list and what each topology
+  checks; every one of those pins `provider: clab`, so they describe the container only.
+* `srv6` is control-plane and kernel-plane only: the locator and End/End.X SIDs are advertised in
+  the IS-IS LSDB and installed as kernel `seg6local` routes, but the end-to-end SRv6 datapath does
+  not resolve -- the same open item as FRR/IS-IS SRv6 on other platforms.
+* `tunnel.gre` is claimed for IPv4 transport only. GRE over IPv6 and GRE in a transport VRF have
+  never been exercised on this image.
 * Genuinely unsupported on this image (not just untested): DHCP relay/client (no
   `dhcrelay`/`dhcp6relay` binary), real STP port-blocking (config-plane only, no `stpd`
-  daemon), and the `mlag.vtep` active-active EVPN datapath (config-plane renders correctly, but
-  there is no `mclagd`, so BGP never resolves a usable self-next-hop for the anycast VTEP).
+  daemon), MLAG (no `mclagd`, so the pair never forms), and the `mlag.vtep` active-active EVPN
+  datapath (config-plane renders correctly, but BGP never resolves a usable self-next-hop for the
+  anycast VTEP).
 
 (caveats-vyos)=
 ## VyOS
