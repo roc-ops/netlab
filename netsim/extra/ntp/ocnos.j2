@@ -1,0 +1,52 @@
+{#
+  NTP client -- IP Infusion OcNOS.
+
+  WHY THIS DEVICE HAS ONE: ocnos runs under vrnetlab, so it is a QEMU VM with its own clock
+  rather than a container sharing the host's. Measured on a live o1: before this template was
+  applied `show ntp peer-status` reported "No association IDs returned" (no time source at
+  all), and the first poll after it was applied measured an offset of 1295.649 ms. Smaller
+  than the n9kv's 4m08s, but that node had been up far longer -- drift ACCUMULATES with
+  uptime, so a freshly booted VM being close to the host proves nothing about a long-lived one.
+
+  COMMANDS: grounded in the OcNOS 7.0 System Management Guide, "NTP Client" configuration.
+
+  WHY THERE IS NO `ntp enable vrf management` HERE, though the guide lists it: OcNOS ships
+  with NTP already enabled, and re-issuing the command on a device where it is already on
+  answers "%% Given configuration already exists", which the deploy task treats as a failure
+  and which aborts `netlab up` for the whole lab. Verified on a live node: `feature ntp` and
+  `ntp server` are both idempotent (re-applying either is clean), `ntp enable` is not. If you
+  ever meet an OcNOS build that ships with NTP disabled, this template will need it back --
+  guarded, not unconditional.
+
+  VRF: OcNOS runs NTP on the management VRF by default, and netlab's OcNOS management
+  interface is eth0 in `vrf management` -- the same VRF the initial template already uses for
+  `feature streaming-telemetry vrf management`.
+
+  NO `commit` HERE: the OcNOS deployment task (ansible/tasks/deploy-config/ocnos.yml) issues
+  the commit itself and carries the logic that distinguishes an advisory response from a real
+  failure. A commit here would duplicate it and defeat that handling.
+
+  VERIFY WITH `show ntp peer-status`: a leading `*` on the server line means selected for
+  sync. The presence of the config is not evidence that it worked.
+#}
+{#
+  ---- SHARED NOTE (kept in both ntp templates) --------------------------------------------
+  THE SERVER ADDRESS IS DERIVED, NOT HARD-CODED. It is the lab's management gateway, which on
+  any netlab host is the host itself -- the box where chronyd runs. Deriving it keeps this
+  correct under any multilab id (the mgmt network is 192.168.<id>.0/24) and on any netlab
+  host, instead of pinning one box's address into the fork.
+
+  THE TWO RENDER CONTEXTS ARE NOT THE SAME, and this is the trap that cost the first attempt:
+    * netlab renders this at `netlab create` time with its OWN Jinja environment, where the
+      management pool is `addressing.mgmt.ipv4`; `pools` does NOT exist.
+    * Ansible renders it again at `netlab initial` time, where the same data is `pools.mgmt`
+      (outputs/ansible.py copies topology.addressing into `pools`); `addressing` does NOT
+      exist.
+  A template using only one of them fails in the other context. Using only `pools` failed at
+  create time with a bare "'width' is undefined" -- netaddr choking on an Undefined value,
+  an error that names nothing useful. Hence the explicit either/or below.
+#}
+{% set _mgmt_pool = addressing.mgmt.ipv4 if addressing is defined else pools.mgmt.ipv4 %}
+feature ntp vrf management
+!
+ntp server {{ _mgmt_pool | ipaddr('1') | ipaddr('address') }} vrf management

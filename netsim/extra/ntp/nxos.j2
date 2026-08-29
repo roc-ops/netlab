@@ -1,0 +1,33 @@
+{#
+  NTP client -- Cisco NX-OS.
+
+  WHY THIS DEVICE HAS ONE: nxos runs under vrnetlab, so it is a QEMU VM with its OWN clock,
+  not a container sharing the host's. Measured on a live n9kv before this template existed:
+  host 21:00:00 UTC, VM 20:55:52 UTC -- 4m08s adrift. Worse, that VM already claimed
+  "Time source is NTP" with no server configured anywhere, so the device's own status output
+  asserts a synchronisation it has not earned. Do not use it to check this worked; use
+  `show ntp peers` (lists the configured server) and `show ntp peer-status` (shows whether it
+  is actually reachable and selected).
+
+  VRF: mgmt0 lives in the `management` VRF on NX-OS, and it is the only interface with a path
+  to the gateway, so the request has to be sourced there or it is never answered.
+#}
+{#
+  ---- SHARED NOTE (kept in both ntp templates) --------------------------------------------
+  THE SERVER ADDRESS IS DERIVED, NOT HARD-CODED. It is the lab's management gateway, which on
+  any netlab host is the host itself -- the box where chronyd runs. Deriving it keeps this
+  correct under any multilab id (the mgmt network is 192.168.<id>.0/24) and on any netlab
+  host, instead of pinning one box's address into the fork.
+
+  THE TWO RENDER CONTEXTS ARE NOT THE SAME, and this is the trap that cost the first attempt:
+    * netlab renders this at `netlab create` time with its OWN Jinja environment, where the
+      management pool is `addressing.mgmt.ipv4`; `pools` does NOT exist.
+    * Ansible renders it again at `netlab initial` time, where the same data is `pools.mgmt`
+      (outputs/ansible.py copies topology.addressing into `pools`); `addressing` does NOT
+      exist.
+  A template using only one of them fails in the other context. Using only `pools` failed at
+  create time with a bare "'width' is undefined" -- netaddr choking on an Undefined value,
+  an error that names nothing useful. Hence the explicit either/or below.
+#}
+{% set _mgmt_pool = addressing.mgmt.ipv4 if addressing is defined else pools.mgmt.ipv4 %}
+ntp server {{ _mgmt_pool | ipaddr('1') | ipaddr('address') }} use-vrf management
