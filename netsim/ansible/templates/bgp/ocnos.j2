@@ -14,6 +14,26 @@
   route, correct next hop, and RR cluster-id all present in the client's BGP table.
 #}
 {% if bgp.as is defined %}
+{# 4-byte ASNs (>65535) need the capability enabled GLOBALLY, before "router bgp".
+   Without it OcNOS rejects the whole BGP commit, and the error names whichever
+   sub-element validation reached first -- typically the IPv6 network-list, e.g.
+
+     network-list[local-network-prefix='2001:db8:0:1::/64']/config
+     %% bgpd config validation failed
+
+   which reads like an IPv6 /64 problem and was long recorded as one. It is not: the
+   identical /64 statement commits cleanly with a 2-byte ASN, and a 4-byte ASN fails
+   with the capability missing. The rollback is total, so a node hits this with no BGP
+   configuration at all. #}
+{% set ns = namespace(fourbyte = bgp.as|int > 65535) %}
+{% for n in bgp.neighbors|default([]) %}
+{% if n.as is defined and n.as|int > 65535 %}
+{% set ns.fourbyte = True %}
+{% endif %}
+{% endfor %}
+{% if ns.fourbyte %}
+bgp extended-asn-cap
+{% endif %}
 {# bgp.originate: OcNOS advertises a  only if it is in the RIB, so back each
    originated prefix with a Null0 discard route (issue #17) #}
 {% for pfx in bgp.originate|default([]) %}

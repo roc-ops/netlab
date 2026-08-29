@@ -131,6 +131,20 @@ clab:
     ansible_ssh_pass: ocnos
     netlab_console_connection: ssh
     netlab_show_command: [ show ]
+    # Readiness gate. Without it netlab waited for nothing and every 'netlab up' died with
+    # "No existing session". Only the 'ansible' step is usable: the built-in 'ssh' step
+    # waits for `ssh <node> "show version"` to exit 0, but cmlsh has no non-interactive
+    # exec mode and exits 1 on a fully booted node, so that step can never go green.
+    # tasks/readiness-check/ocnos-clab.yml has the evidence and does the waiting.
+    netlab_ready: [ ansible ]
+    # The netlab defaults of 20 x 5s = 100s are not enough for an OcNOS vrnetlab VM.
+    # Measured on this host: the node answered after 4 retries (~40-50s from container
+    # creation) and the whole single-pass 'netlab up' took 108s. 60 x 10s = 600s is a
+    # ceiling with lots of headroom, not an expected wait -- the probe returns in ~0.2s
+    # once the node answers, so a fast boot costs nothing. Raise netlab_check_retries in
+    # the topology if a loaded host needs longer.
+    netlab_check_retries: 60
+    netlab_check_delay: 10
 external:
   image: none
 graphite.icon: router
