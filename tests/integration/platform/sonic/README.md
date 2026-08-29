@@ -1,10 +1,17 @@
 # SONiC (clab) smoke tests -- issue #40
 
 Device-specific bring-up smoke tests for the `sonic` device under provider `clab`
-(docker-sonic-vs on containerlab). Every topology below has been run live against a real
-`docker-sonic-vs:latest` node (containerlab 0.77.0, multilab id 52) with
-`netlab up`/`netlab initial`. Adapted from our out-of-tree reference implementation
+(docker-sonic-vs on containerlab). Adapted from our out-of-tree reference implementation
 (roccontlab netlab/sonic/) with `multilab.id` -> 52.
+
+**Status of the "checked live" column below.** Every topology was run live against a real
+`docker-sonic-vs:latest` node (containerlab 0.77.0, multilab id 52) with
+`netlab up`/`netlab initial` -- but against the RETIRED `sonic_clab` device, on the
+initial script as it stood then. The converged device renders a different initial script
+(kernel MTU instead of a CONFIG_DB write, a config_db readiness retry, an FRR-daemon
+readiness gate, a different restart placement), so those results carry over in expectation,
+not in evidence. They have NOT yet been re-run live on the converged device. Treat the column
+as "passed on the retired device" until a bring-up says otherwise.
 
 **These are container tests, despite the directory name.** The directory is named for the
 DEVICE (`sonic`), because that is what netlab's integration-test runner keys on, but every
