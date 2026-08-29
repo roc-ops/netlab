@@ -134,27 +134,118 @@ clab:
   #
   # Verified on docker-sonic-vs and therefore re-enabled for the container only.
   #
+  # Everything below arrived with the retired `sonic_clab` device, which reached these flags by
+  # live testing across 19 module templates and re-verified each one in tree; the evidence is in
+  # tests/integration/platform/sonic/. They are declared HERE, under clab:, because they are
+  # properties of the container image -- the libvirt SONiC VM is a different architecture and
+  # keeps the conservative global values above.
+  #
+  # Note on the merge: several of these override a global `false` with a dictionary
+  # (tunnel, vrf, mpls, sr, srv6, ripv2, vlan, lag, vxlan). netsim/augment/devices.py
+  # get_device_attribute() returns `features + clab.features`, and a dict on the right replaces
+  # a scalar on the left while leaving sibling keys alone -- so the deliberate global falses that
+  # nothing here mentions (bgp.role, bgp.vrf_local_as, initial.ra, initial.reload,
+  # routing.policy.match.nexthop, routing.policy.set.community.extended, stp, dhcp) survive.
+  #
   features:
-    vlan: False
-#      model: l3-switch
-#      svi_interface_name: "Vlan{vlan}"
-#      subif_name: "{ifname}.{subif_index}"
-#      native_routed: true
-    lag: False
-#      passive: true
+    vlan:
+      model: l3-switch
+      svi_interface_name: "Vlan{vlan}"    # config_db object name -- CAPITAL V; the config CLI
+                                          # rejects netlab default lowercase vlan<id>
+#      subif_name: "{ifname}.{subif_index}"   # never exercised on this platform -> not claimed
+#      native_routed: true                    # never exercised on this platform -> not claimed
+    lag:
+      passive: true
       # MLAG does not work: docker-sonic-vs has no mclagd, so the pair never forms
       # (lag/10-mlag: "X1 cannot establish a LAG with both switches in MLAG pair", then the
-      # datapath is lost). Declared False rather than described in the caveats -- a feature that
-      # does not work belongs turned off. Note this does not on its own make netlab refuse an
-      # MLAG topology: netsim/modules/lag.py gates the peer-link machinery on
-      # "lag.mlag OR evpn.multihoming.lag", and evpn.multihoming.lag is still declared below.
-#      mlag: False
-    vxlan: false                # Use SONiC commands to configure it
+      # datapath is lost). The peer-link address below is nevertheless declared, because the
+      # retired sonic_clab device declared it and this commit is a convergence, not a change of
+      # feature support: netsim/modules/lag.py gates the peer-link machinery on
+      # "lag.mlag OR evpn.multihoming.lag", and evpn.multihoming.lag is declared below in any
+      # case. Whether to turn MLAG off outright is a separate decision on its own evidence.
+      mlag:
+        peer:
+          ip: 169.254.127.0/31   # static /31 peer-link (EOS pattern); SONiC has no MLAG
+                                 # keepalive protocol to negotiate one over -- config-plane only
+    vxlan: true              # L2VNI via the FRR/kernel path (orchagent cannot program the VS
+                             # dataplane), see vxlan/sonic-clab.j2
     evpn:
       transport: [ vxlan, mpls ]
-      irb: true
-      multihoming:
+      irb: true               # symmetric IRB / L3VNI -- kernel VRF + vxlan L3VNI transit device
+      multihoming:            # evpn.multihoming plugin: ESI-LAG on PortChannel (teamd) via zebra
         lag: true
+        interface: false
+        esi_auto: true
+        modes: [ all-active ]
+    bgp:
+      import: [ connected, static, ospf ]   # redistribute-into-BGP (frr.j2 renders it)
+      advertise: true                       # bgp.originate: static discard route backs the prefix
+      password: true                        # bgp.session plugin (MD5)
+      timers: true
+      gtsm: true
+      passive: true
+      bfd: true
+      multihop:                             # ebgp.multihop plugin (FRR-delegated)
+        vrf: true
+    ospf:
+      unnumbered: true
+      default: true
+      areas: true
+      timers: true
+      priority: true
+      password: true
+      bfd: true
+    isis:
+      circuit_type: true
+      unnumbered: { ipv4: true, ipv6: true, network: true }
+      import: [ static ]
+    mpls:
+      ldp: true             # LDP control-plane; no kernel MPLS label FIB in a clab container
+      vpn: true             # unlocks BGP VPNv4/VPNv6 L3VPN import
+    sr:
+      af: [ ipv4, ipv6 ]    # SR-MPLS via IS-IS; SIDs flooded/visible in the IS-IS LSDB
+      protocol: [ isis ]
+    srv6:
+      isis: true            # kernel seg6 (net.ipv6.seg6_enabled), not the MPLS label FIB
+    vrf:
+      keep_module: true
+      ospfv2: true
+      ospfv3: true
+      bgp: true
+      isis: true
+    bfd: true
+    ripv2:
+      ipv4: true
+    gateway:
+      protocol: [ vrrp ]
+      vrrp:
+        version: true       # vrrp.version plugin (FRR vrrpd v2/v3), template in
+                            # netsim/extra/vrrp/version/sonic-clab.j2
+    routing:
+      static:
+        vrf: true
+        discard: true        # Null0 blackhole (backs bgp.originate)
+      prefix: true
+      aspath: true
+      community:
+        standard: true
+        large: true
+      policy:
+        match:
+          prefix: true
+          aspath: true
+          community:
+            standard: true
+        set:
+          locpref: true
+          med: true
+          prepend: true
+          weight: true
+          community:
+            standard: true
+    tunnel:
+      gre: true              # tunnel.gre plugin: kernel ip_gre/ip6_gre, FRR-delegated bash
+                             # template (extra/tunnel/gre/frr.j2) -- reused as-is, no override
     initial:
       collect: true             # ansible_connection: docker unblocks this (no sshd needed)
     # Repeated from the global features above: FRR declares clab.features.services as a dict,
