@@ -8,8 +8,16 @@ message: |
   Live-verified (2026-07-17): OSPF adjacency reaches Full and the BGP session
   reaches Established after 'netlab initial'.
 
+  Re-verified live 2026-08-29 (issue #87) on vrnetlab/ipinfusion_ocnos:7.0.0-262, and it is
+  DUAL-STACK green, which the original result did not record: OSPFv2 Full, OSPFv3 Full,
+  BGP Established on the IPv4 AF (10.8.0.2) AND on the IPv6 AF (2001:db8:80:2::1), one
+  prefix received on each. The topology declares no IPv6 addressing of its own -- netlab's
+  default pools are dual-stack, so a single-AF reading of this test was always half a test.
+
 provider: clab
+plugin: [ multilab ]
 defaults.device: ocnos
+defaults.multilab.id: 53
 module: [ ospf, bgp ]
 bgp.as: 65000
 

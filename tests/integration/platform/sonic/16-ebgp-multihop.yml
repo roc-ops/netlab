@@ -6,7 +6,20 @@
 # the realistic multihop underlay. The connected link carries NO direct BGP session
 # (bgp: False) so the ONLY session is the multihop loopback-to-loopback one.
 # FRR-delegated (templates/ebgp.multihop/sonic.j2 = include frr.j2).
-#   netlab up sonic-ebgpmh.yml  ->  session reaches Established, loopbacks exchanged.
+#
+# The statics are written SYMBOLICALLY (node: / nexthop.node:) and must stay that way.
+# They were literals -- 10.0.0.2/32 via 10.1.0.2 -- until issue #87. netlab's default pools
+# had since moved to 10.8.0.0/24 (loopback) and 10.10.0.0/30 (p2p), so the next hop was on no
+# interface, the static never entered the RIB at all, the remote loopback was unreachable and
+# both multihop sessions sat in Active forever. The recorded "Established" result had been
+# unreproducible for as long as nobody re-ran it. The symbolic form resolves against whatever
+# the pools are on the day it runs, and it covers IPv4 and IPv6 in one entry -- the literal
+# form only ever provided IPv4 statics, so the v6 session it also builds could never have
+# come up either.
+#
+# Live-verified 2026-08-29 (issue #87): both AFs reach Established, statics installed
+# (S>* 10.8.0.2/32 via 10.10.0.2 and S>* 2001:db8:80:2::/64 via 2001:db8:100::2), 1 prefix
+# received each way on each AF.
 provider: clab
 plugin: [ multilab, ebgp.multihop ]
 defaults:
@@ -26,13 +39,13 @@ nodes:
   s1:
     bgp.as: 65001
     routing.static:
-    - ipv4: 10.0.0.2/32
-      nexthop.ipv4: 10.1.0.2
+    - node: s2
+      nexthop.node: s2
   s2:
     bgp.as: 65002
     routing.static:
-    - ipv4: 10.0.0.1/32
-      nexthop.ipv4: 10.1.0.1
+    - node: s1
+      nexthop.node: s1
 
 links:
 - s1:
