@@ -45,8 +45,14 @@
   #   - the message must start with the command that failed being "commit". A config LINE
   #     that errors aborts the remaining lines (cliconf re-raises), so the config would be
   #     half-applied and must stay a failure.
-  #   - it must carry the advisory wording. Anything else after a commit -- "% Failed to
-  #     commit", a real %% error -- still fails.
+  #   - the commit must NOT have reported "% Failed to commit". That is the honest
+  #     discriminator, and matching it beats matching advisory WORDING: the first
+  #     version keyed on 'command to take effect', which is only one member of a
+  #     family. A reference-bandwidth change answers with
+  #         %% OSPF: Reference bandwidth is changed.
+  #          Please ensure reference bandwidth is consistent across all routers
+  #     -- equally benign, equally applied, and it still failed the deploy. A real
+  #     rejection always carries "% Failed to commit"; an advisory never does.
   #
   # The expression is unit-tested against the message captured from the real failure plus
   # four negatives (genuine commit failure, a config-line error, advisory wording on a
@@ -80,7 +86,7 @@
     ocnos_deploy is failed
     and not (
       ocnos_deploy.msg is search("^b?['\"]?commit")
-      and 'command to take effect' in ocnos_deploy.msg
+      and 'Failed to commit' not in ocnos_deploy.msg
     )
   tags: [ print_action, always ]
 
@@ -92,4 +98,5 @@
       intend to reset the protocol -- on a running lab that tears down healthy adjacencies.
   when:
   - ocnos_deploy.msg is defined
-  - "'command to take effect' in ocnos_deploy.msg"
+  - ocnos_deploy is failed or 'Failed to commit' not in ocnos_deploy.msg
+  - ocnos_deploy.msg is search("^b?['\"]?commit")
