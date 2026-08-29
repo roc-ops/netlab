@@ -157,7 +157,7 @@ clab:
       ospf: [ ospfd, ospf6d ]
       isis: [ isisd ]
       bfd: [ bfdd ]
-      ripv2: [ ripd ]
+      ripv2: [ ripd, ripngd ]
       vrf: [ bgpd ]
       gateway: [ vrrpd ]
       mpls: [ ldpd ]
