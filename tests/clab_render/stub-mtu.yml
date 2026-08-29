@@ -1,0 +1,7 @@
+# Single-endpoint (stub) link with an MTU -- renders through the dummy-interface branch.
+provider: clab
+defaults.device: linux
+nodes: [ h1 ]
+links:
+- interfaces: [ h1 ]
+  mtu: 1500

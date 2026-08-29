@@ -1,0 +1,7 @@
+# Same bridge link with NO mtu in the topology. netlab still resolves an interface MTU, so this
+# is not the "no MTU" case it looks like -- which is why the bug was far wider than it appeared.
+provider: clab
+defaults.device: linux
+nodes: [ h1, h2, h3 ]
+links:
+- interfaces: [ h1, h2, h3 ]

@@ -1,0 +1,7 @@
+# 3-endpoint (bridge) link WITH an explicit MTU -- the shape that broke containerlab.
+provider: clab
+defaults.device: linux
+nodes: [ h1, h2, h3 ]
+links:
+- interfaces: [ h1, h2, h3 ]
+  mtu: 1500

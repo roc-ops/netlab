@@ -1,0 +1,8 @@
+# Two-node link with an MTU -- the branch that was already correct; guards against a regression
+# in the other direction.
+provider: clab
+defaults.device: linux
+nodes: [ h1, h2 ]
+links:
+- interfaces: [ h1, h2 ]
+  mtu: 9000
