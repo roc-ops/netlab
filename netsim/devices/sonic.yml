@@ -13,6 +13,45 @@ parent: frr
 description: SONiC
 support:
   level: minimal
+  # Live-probed limits. Every entry below was reached by RUNNING the thing on
+  # docker-sonic-vs, not by reading documentation, and they are container findings -- the
+  # libvirt SONiC VM is a different architecture and none of them were tested there.
+  caveats:
+  - >-
+    Config deployment on the container uses netlab's native "sh" config mode inherited from the
+    FRR parent device (each rendered snippet is bind-mounted in as /etc/config/NN-<module>.sh and
+    run with docker exec); what still goes through Ansible -- configuration collection, validation
+    and the 'netlab config' custom-template reload -- uses the 'docker' connection plugin, not
+    network_cli. network_cli is not usable here: it needs a cliconf plugin, and the only SONiC
+    cliconf Ansible ships (dellemc.enterprise_sonic) targets Dell's licensed klish/Management
+    Framework CLI, which this image does not contain -- verified, no sonic-cli or klish binary
+    anywhere in the image. See templates/initial/sonic-clab.j2 for the full writeup.
+  - >-
+    docker-sonic-vs ships sshd and host keys but starts neither sshd nor a login user;
+    templates/initial/sonic-clab.j2 bootstraps both (admin / ansible_ssh_pass) for interactive
+    access ('netlab connect', ad-hoc troubleshooting). SSH is not used to deploy configuration.
+  - >-
+    docker-sonic-vs is a MONOLITHIC single container -- FRR's vtysh runs directly in the
+    container's own namespace. The libvirt SONiC VM is multi-container and reaches FRR through
+    'docker exec bgp vtysh', so the initial and bgp templates are not shared between the two
+    deployments; the container gets its own <module>/sonic-clab.j2 files.
+  - >-
+    Genuinely unsupported on the container, not merely untested -- each was probed live: dhcp
+    relay and client (the image ships no dhcrelay/dhcp6relay binary at all); stp (config-plane
+    only, there is no stpd daemon, so there is no port-blocking behaviour to verify); mlag.vtep,
+    i.e. an anycast VTEP (the config plane renders correctly -- identical vtep-ip-global, underlay
+    OSPF Full, BGP EVPN Established -- but the active-active overlay is platform-blocked: with no
+    mclagd, BGP never resolves a usable self-next-hop for the anycast VTEP and the datapath loses
+    100% of traffic); check.config, i.e. configuration validation, which is inapplicable and
+    unsafe together with the 'files' plugin because of a netlab-core plugin-ordering bug that
+    silently deletes files-plugin configlets (independently reproduced against ArcOS and OcNOS,
+    so not device-specific).
+  - >-
+    MLAG does not work on the container: there is no mclagd, so the pair never forms
+    (lag/10-mlag reports "X1 cannot establish a LAG with both switches in MLAG pair" and the
+    datapath is then lost). lag.mlag.peer.ip is nevertheless declared under clab.features,
+    because netsim/modules/lag.py gates the peer-link machinery on "lag.mlag OR
+    evpn.multihoming.lag" and evpn.multihoming.lag IS supported here.
 interface_name: Ethernet{ifindex * 4}
 ifindex_offset: 0
 mgmt_if: eth0
