@@ -5,7 +5,7 @@ ArcOS is a native containerlab container (arrcus_arcos); on this build SSH/NETCO
 so validation reaches the CLI over the SAME docker-exec + confd_cli path config deployment uses
 (ansible_connection: docker). netlab_show_command (devices/arcos.yml -> clab.group_vars) wraps the
 returned path as:  printf 'show <path> | display json' | confd_cli -C -u admin  -- so _result is the
-parsed OpenConfig network-instance JSON. Mirrors how sonic_clab validates over docker-exec.
+parsed OpenConfig network-instance JSON. Mirrors how the SONiC container validates over docker-exec.
 """
 import typing
 

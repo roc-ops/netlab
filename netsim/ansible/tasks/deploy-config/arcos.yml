@@ -2,8 +2,8 @@
 # ArcOS config deploy (issue #39) -- reached over Ansible's built-in 'docker' connection plugin
 # (ansible_connection: docker in netsim/devices/arcos.yml -> clab.group_vars), so 'template'/
 # 'shell' here already execute *inside* the node container -- no docker exec wrapping needed,
-# same pattern as netsim/devices/sonic_clab.yml and netsim/ansible/tasks/deploy-config/
-# sonic_clab.yml.
+# same pattern as the SONiC container (netsim/devices/sonic.yml -> clab: and
+# netsim/ansible/tasks/deploy-config/sonic-clab.yml).
 #
 # LIVE-VERIFIED WORKING END TO END (2-node OSPF+BGP topology, multilab id 51): `netlab initial`
 # commits initial/ospf/bgp cleanly on both nodes ("Commit complete."), is idempotent on rerun

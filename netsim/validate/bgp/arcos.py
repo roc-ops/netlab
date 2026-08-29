@@ -6,7 +6,7 @@ so validation reaches the CLI over the SAME docker-exec + confd_cli path config 
 (ansible_connection: docker). netlab_show_command (devices/arcos.yml -> clab.group_vars) wraps the
 returned path as:  printf 'show <path> | display json' | confd_cli -C -u admin  -- so _result is the
 parsed OpenConfig BGP subtree JSON.  ArcOS speaks OpenConfig JSON, not FRR, so this cannot alias frr
-the way sonic_clab does; the checks below walk the OpenConfig tree directly.
+the way the SONiC container does; the checks below walk the OpenConfig tree directly.
 
 Both checks read the whole per-instance BGP subtree (network-instance <vrf> protocol BGP <instance>),
 which carries neighbor session-state AND the loc-rib / adj-rib routes, so one show path serves both.
