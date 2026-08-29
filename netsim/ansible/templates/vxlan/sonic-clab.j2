@@ -59,11 +59,19 @@ ip link set up dev {{ l.ifname }}
 {%     endfor %}
 {%     if irb %}
 {%       for i in interfaces if i.type|default('') == 'svi' and i.vlan.name|default('') == vname %}
-# IRB gateway: address the bridge itself (it IS the SVI) then enslave into vrf {{ vlan.vrf }}
-if ! ip addr show {{ br }} | grep -q " {{ i.ipv4 }} "; then
-  ip addr add {{ i.ipv4 }} dev {{ br }}
-fi
+# IRB gateway: the bridge IS the SVI. Enslave into vrf {{ vlan.vrf }} FIRST, then address it:
+# changing an interface's master makes the kernel flush its IPv6 addresses, so addressing
+# before the enslave would silently lose the v6 address while keeping the v4 one.
 ip link set {{ br }} master {{ vlan.vrf }}
+{#       Both AFs, via an inner loop rather than two hand-written branches. 'is string' rejects
+         the unnumbered/LLA-only forms (ipv4: True / ipv6: True), which are not addresses and
+         must never reach "ip addr add". Guarding on "is defined" alone is what left the IPv6
+         address configured NOWHERE while BGP advertised its prefix. #}
+{%         for af in ['ipv4','ipv6'] if i[af] is defined and i[af] is string %}
+if ! ip addr show {{ br }} | grep -q " {{ i[af] }} "; then
+  ip addr add {{ i[af] }} dev {{ br }}
+fi
+{%         endfor %}
 {%       endfor %}
 {%     endif %}
 {%   endfor %}
