@@ -3,6 +3,7 @@
 #
 import argparse
 import concurrent.futures
+import os
 import subprocess
 import time
 import typing
@@ -196,6 +197,49 @@ def get_waitlists(nodeset: list, topology: Box) -> Box:
 
   return waitlists
 
+"""
+Remove stale SSH host keys for this lab's management addresses.
+
+Lab containers get a fresh host key every time they are created, but they reuse the same
+management IPs, so the second and every later deployment of a lab hits a mismatch left over
+from the previous one. It surfaces mid-deploy as
+
+    [ERROR]: Task failed: host key mismatch for 192.168.143.101
+
+which names no cause and no remedy, and is indistinguishable from a real failure. Anyone
+iterating on a topology (down / up / down / up) meets it on the second cycle.
+
+netlab already treats these hosts as untrusted -- it passes StrictHostKeyChecking=no and
+UserKnownHostsFile=/dev/null for its own SSH -- so a changed key here carries no security
+signal. But ansible.netcommon.network_cli connects with paramiko and loads ~/.ssh/known_hosts
+anyway, and paramiko raises BadHostKeyException on a MISMATCH regardless of the
+missing-host-key policy. Setting host_key_checking=False in ansible.cfg (which netlab does),
+in [persistent_connection], or via ANSIBLE_HOST_KEY_CHECKING was measured NOT to suppress it
+on ansible-core 12, so the entries have to go.
+
+Only addresses belonging to nodes in this deployment are touched, and only via "ssh-keygen -R"
+so that hashed known_hosts files are handled correctly.
+"""
+def purge_known_hosts(nodeset: list, topology: Box) -> None:
+  keyfile = os.path.expanduser('~/.ssh/known_hosts')
+  if not os.path.exists(keyfile):                           # Nothing to clean
+    return
+  if not external_commands.has_command('ssh-keygen'):       # Cannot clean safely, skip quietly
+    return
+
+  for n_name in nodeset:
+    n_data = topology.nodes[n_name]
+    for af in ('ipv4','ipv6'):
+      addr = n_data.get(f'mgmt.{af}',None)
+      if not addr or isinstance(addr,bool):                 # Missing, or 'mgmt.ipv6: True'
+        continue
+      addr = str(addr).split('/')[0]                        # Drop a prefix length if present
+      subprocess.run(
+        args=['ssh-keygen','-R',addr],
+        capture_output=True,check=False)
+      if log.debug_active('ssh'):
+        print(f'SSH: purged known_hosts entry for {n_name} ({addr})',flush=True)
+
 def run(
       topology: Box,
       args: argparse.Namespace,
@@ -206,6 +250,8 @@ def run(
     nodeset = utils.get_deploy_nodeset(args,topology)
   if rest is None:
     rest = []
+
+  purge_known_hosts(nodeset,topology)
 
   node_waits = get_waitlists(nodeset,topology)
   if node_waits and not log.QUIET:
