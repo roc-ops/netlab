@@ -204,4 +204,32 @@ interface {{ l.ifname }}
 do write
 CONFIG
 vtysh -f /tmp/netlab-initial.frr
+#
+# Put back the lldpd control socket this image deletes at boot (issue #85). SONiC's
+# /usr/bin/start.sh runs start-lldp.sh AFTER supervisord has already started lldpd, and that
+# script ends in `rm -f /var/run/lldpd.socket` -- so lldpd keeps running and transmitting with
+# no way to be asked what it sees, and lldp_syncd/lldpmgrd (both of which go through lldpctl)
+# die with it. Gate on the marker start-lldp.sh writes one line BEFORE the rm, so this cannot
+# run ahead of the damage and skip on a socket that is about to be deleted.
+#
+for _ in $(seq 30); do [ -f /var/sonic/config_status ] && break; sleep 1; done
+sleep 1                                   # the rm is the statement after that marker
+if pgrep -x lldpd >/dev/null && [ ! -S /var/run/lldpd.socket ]; then
+  supervisorctl restart lldpd || true
+  for _ in $(seq 30); do [ -S /var/run/lldpd.socket ] && break; sleep 1; done
+  # lldpd has autorestart=false: if the restart above failed, LLDP would be off entirely --
+  # worse than the socket-less state we started from. Say so somewhere that survives this
+  # script exiting 0 (netlab only shows captured output when a config script FAILS).
+  [ -S /var/run/lldpd.socket ] || {
+    supervisorctl start lldpd || true
+    logger -t netlab-lldp "lldpd control socket not restored (issue #85)"
+  }
+  # lldpd starts PAUSED (/etc/lldpd.conf ends in `pause`), and its self-resume is the unreliable
+  # step waitfor_lldp_ready.sh exists to work around, so do it explicitly.
+  lldpcli -u /var/run/lldpd.socket -c /etc/lldpd.conf -c /etc/lldpd.d resume || true
+  # Both consumers exited when the socket went away; neither has autorestart, and lldpmgrd's
+  # dependent_startup ordering only applies at boot, so nothing else brings them back.
+  supervisorctl restart lldp-syncd || true
+  supervisorctl restart lldpmgrd || true
+fi
 exit 0
