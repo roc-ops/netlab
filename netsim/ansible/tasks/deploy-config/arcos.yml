@@ -107,6 +107,13 @@
       --host {{ ansible_host }}
       --config /tmp/netlab-{{ inventory_hostname }}-{{ netsim_action }}.cfg
       --node {{ inventory_hostname }}
+    args:
+      # Run from the LAB directory. The applicator identifies the owning lab by reading
+      # clab.yml, and Ansible does not guarantee the working directory of a delegated
+      # `command` -- so without this it found no clab.yml, concluded the lab was unnamed,
+      # and then refused the lab's OWN VLANs as belonging to somebody else. inventory_dir
+      # is the lab directory, because netlab writes hosts.yml there.
+      chdir: "{{ inventory_dir }}"
     register: arcos_hw_push
     changed_when: "'Commit complete' in arcos_hw_push.stdout"
     failed_when: arcos_hw_push.rc != 0
