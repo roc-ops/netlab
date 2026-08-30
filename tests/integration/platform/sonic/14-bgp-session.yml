@@ -15,3 +15,35 @@ links:
 - s1:
   s2:
   bgp.password: Secret123
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  md5_applied:
+    description: The MD5 password is applied to the IPv4 AND IPv6 neighbours
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    exec: vtysh -c "show running-config"
+    valid: |
+      stdout.count('password Secret123') == 2
+    fail: the password is missing on at least one address family
+  session_v4:
+    description: The IPv4 session is Established WITH the password in place
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    wait_msg: Waiting for the authenticated IPv4 session
+    show: ip bgp summary json
+    valid: |
+      ipv4Unicast.failedPeers == 0 and ipv4Unicast.totalPeers == 1
+  session_v6:
+    description: The IPv6 session is Established WITH the password in place
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    show: bgp ipv6 unicast summary json
+    valid: |
+      failedPeers == 0 and totalPeers == 1

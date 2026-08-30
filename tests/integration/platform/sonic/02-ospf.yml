@@ -10,3 +10,28 @@ nodes: [ s1, s2 ]
 links:
 - s1:
   s2:
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  ospfv2:
+    description: OSPFv2 adjacency reaches Full
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the OSPFv2 adjacency
+    exec: vtysh -c "show ip ospf neighbor"
+    valid: |
+      'Full' in stdout
+  ospfv3:
+    description: OSPFv3 adjacency reaches Full -- this lab is dual-stack, so one AF is half a test
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the OSPFv3 adjacency
+    exec: vtysh -c "show ipv6 ospf6 neighbor"
+    valid: |
+      'Full' in stdout

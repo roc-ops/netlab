@@ -5,13 +5,23 @@
 #
 # UNLIKE ArcOS's native container (no kernel MPLS at all), docker-sonic-vs shares the
 # HOST kernel netns machinery for net.mpls -- the sysctls just don't exist until the
-# mpls_router/mpls_iptunnel modules are loaded ANYWHERE on the host:
-#   sudo modprobe mpls_router mpls_iptunnel
-# Once loaded, /proc/sys/net/mpls/* appears in every container's netns immediately
-# (even already-running ones) and mpls/frr.j2's `sysctl -w net.mpls.platform_labels`
-# succeeds -- so this gets a REAL kernel label FIB (`ip -M route`), not just a
-# control-plane proof. This is a one-time HOST prerequisite, not something the
-# topology YAML can express -- document it, don't assume it's already loaded.
+# mpls_router/mpls_iptunnel modules are loaded ANYWHERE on the host. Once they are,
+# /proc/sys/net/mpls/* appears in every container's netns immediately (even in
+# already-running ones) and mpls/frr.j2's `sysctl -w net.mpls.platform_labels` succeeds --
+# so this gets a REAL kernel label FIB (`ip -M route`), not just a control-plane proof.
+#
+# NETLAB LOADS THEM FOR YOU. This comment used to say it was "a one-time HOST prerequisite,
+# not something the topology YAML can express -- document it". That was wrong, and had been
+# for a while: netlab has a `kmods:` mechanism for exactly this, the clab provider already
+# maps `mpls` and `sr` to [ mpls-router, mpls-iptunnel ] (netsim/providers/clab.yml), and
+# sonic.yml opts in via its own `kmods:` key. Confirmed on 2026-08-29 -- `netlab up` prints:
+#   [LOADING] Loading Linux kernel modules mpls-router,mpls-iptunnel required by containers
+#             using sr module
+# and runs the modprobe itself. Nothing has to be done by hand first (issue #87).
+#
+# The general point, which is why this is worth eleven lines: a result whose preconditions
+# live in a human's head rather than in the artifact is not reproducible. Before documenting
+# a manual setup step, check whether the tool already has a mechanism for it.
 #
 # sr.srgb.start is a MODEL GAP for IS-IS SR-MPLS on FRR (checked against the exact
 # upstream template that renders this, not assumed): netsim/ansible/templates/sr/frr.j2
@@ -33,14 +43,25 @@
 # deploy looks like it "half worked": check whether every node actually finished.)
 #
 # This IS a REAL end-to-end MPLS L3VPN datapath: s2 (vrf red) pings s1's vrf-red stub
-# (172.16.0.1) across two real kernel-programmed MPLS labels (LDP transport + BGP VPN
-# label), 0% loss. VRF blue -> 172.16.0.1 correctly FAILS (100% loss) -- blue imports
+# across two real kernel-programmed MPLS labels (LDP transport + BGP VPN
+# label), 0% loss. VRF blue -> the same address correctly FAILS (100% loss) -- blue imports
 # red's RT so it has a forward route, but red does NOT import blue's RT, so s1 has no
 # return route to blue's prefix; one-way leak is by design (matches the existing
 # vrf_leak module), not a bug.
-#   sudo modprobe mpls_router mpls_iptunnel   # HOST prerequisite, once
-#   netlab up sonic-mpls.yml
-#   python validate/sonic.py --module mpls sr mpls_vpn
+#
+# Addresses are deliberately NOT named in this comment any more (issue #87). It used to say
+# the ping target was 172.16.0.1; netlab's VRF pool has since moved and it is 172.18.0.1
+# today. A comment that names a pool-allocated address goes stale the moment the pool moves,
+# and a stale address in a test's own documentation is how #87's other two broken rows hid.
+# Read the addresses off the running lab (ip -br addr show vrf red).
+#
+# Live-verified 2026-08-29 (issue #87), and it holds in FULL: IS-IS Up, LDP OPERATIONAL,
+# VPNv4 AND VPNv6 Established, a real kernel MPLS label FIB (ip -M route shows LDP transport,
+# IS-IS SR and BGP VPN labels), red->red ping 5/5 and ping6 4/4 at 0% loss across two labels,
+# and the by-design one-way blue->red failure reproduces exactly (s1: "% Network not in
+# table" for blue's prefix). The IPv6 VPN datapath had never been recorded before.
+#   netlab up 06-mpls-sr-l3vpn.yml
+#   netlab validate
 provider: clab
 plugin: [ multilab ]
 defaults:
@@ -70,3 +91,86 @@ links:
 - s2:
   vrf: blue
   type: stub
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  isis:
+    description: IS-IS adjacency between the PEs is Up
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the IS-IS adjacency
+    exec: vtysh -c "show isis neighbor"
+    valid: |
+      'Up' in stdout
+  ldp:
+    description: LDP session is Operational
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 40
+    wait_msg: Waiting for the LDP session
+    exec: vtysh -c "show mpls ldp neighbor"
+    valid: |
+      'OPERATIONAL' in stdout
+  mpls_fib:
+    description: A REAL kernel MPLS label FIB, not just a control-plane claim
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: ip -M route
+    valid: |
+      'proto ldp' in stdout and 'proto bgp' in stdout
+    fail: no kernel label FIB -- netlab should have auto-loaded mpls_router/mpls_iptunnel
+  vpnv4:
+    description: VPNv4 session Established
+    nodes: [ s2 ]
+    devices: [ sonic ]
+    wait: 40
+    wait_msg: Waiting for the VPNv4 session
+    show: bgp ipv4 vpn summary json
+    valid: |
+      peers['{{ hostvars.s1.loopback.ipv4|ipaddr('address') }}'].state == 'Established'
+  vpnv6:
+    description: VPNv6 session Established -- the AF this row never used to check
+    nodes: [ s2 ]
+    devices: [ sonic ]
+    wait: 40
+    show: bgp ipv6 vpn summary json
+    valid: |
+      peers['{{ hostvars.s1.loopback.ipv4|ipaddr('address') }}'].state == 'Established'
+  l3vpn_v4:
+    description: L3VPN IPv4 datapath -- s2 vrf red reaches s1 vrf red across two labels
+    nodes: [ s2 ]
+    devices: [ sonic ]
+    wait: 40
+    wait_msg: Waiting for the VPN route to install
+    exec: >-
+      ip vrf exec red ping -c5 -W2
+      {{ hostvars.s1.interfaces|selectattr('vrf','equalto','red')|map(attribute='ipv4')|first|ipaddr('address') }}
+    valid: |
+      '0% packet loss' in stdout
+  l3vpn_v6:
+    description: L3VPN IPv6 datapath
+    nodes: [ s2 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: >-
+      ip vrf exec red ping6 -c4 -W2
+      {{ hostvars.s1.interfaces|selectattr('vrf','equalto','red')|map(attribute='ipv6')|first|ipaddr('address') }}
+    valid: |
+      '0% packet loss' in stdout
+  leak_is_one_way:
+    description: blue -> red correctly FAILS, by design (red does not import blue's RT)
+    nodes: [ s2 ]
+    devices: [ sonic ]
+    exec: >-
+      ip vrf exec blue ping -c2 -W2
+      {{ hostvars.s1.interfaces|selectattr('vrf','equalto','red')|map(attribute='ipv4')|first|ipaddr('address') }}
+      ; true
+    valid: |
+      '100% packet loss' in stdout
+    fail: blue reached red -- the one-way leak this row asserts is no longer one-way

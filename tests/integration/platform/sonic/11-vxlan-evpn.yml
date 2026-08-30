@@ -36,3 +36,45 @@ links:
 - s2:
     vlan.access: red
   h2:
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  evpn_session:
+    description: EVPN address family Established between the VTEPs
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the EVPN session
+    show: bgp l2vpn evpn summary json
+    valid: |
+      peers['{{ hostvars.s2.loopback.ipv4|ipaddr('address') }}'].state == 'Established'
+  remote_vtep:
+    description: The remote VTEP was learned on the L2VNI
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    wait_msg: Waiting for the remote VTEP
+    exec: vtysh -c "show evpn vni"
+    valid: |
+      '{{ vlans.red.vni }}' in stdout
+  datapath_v4:
+    description: h1 reaches h2 across the VXLAN tunnel, IPv4
+    nodes: [ h1 ]
+    devices: [ linux ]
+    wait: 40
+    wait_msg: Waiting for the overlay datapath
+    exec: ping -c5 -W2 {{ hostvars.h2.interfaces[0].ipv4|ipaddr('address') }}
+    valid: |
+      '0% packet loss' in stdout
+  datapath_v6:
+    description: h1 reaches h2 across the VXLAN tunnel, IPv6 -- never recorded until issue 87
+    nodes: [ h1 ]
+    devices: [ linux ]
+    wait: 40
+    exec: ping -6 -c4 -W2 {{ hostvars.h2.interfaces[0].ipv6|ipaddr('address') }}
+    valid: |
+      '0% packet loss' in stdout

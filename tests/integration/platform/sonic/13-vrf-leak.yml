@@ -22,3 +22,29 @@ links:
 - s1:
   vrf: blue
   type: stub
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  leak_in:
+    description: red's prefix is imported into blue via the route target
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    wait_msg: Waiting for the RT import
+    exec: vtysh -c "show ip route vrf blue"
+    valid: |
+      'vrf red' in stdout
+  leak_is_one_way:
+    description: blue's prefix does NOT appear in red -- the leak is deliberately one-way
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    exec: vtysh -c "show ip route vrf red"
+    valid: |
+      'IPv4 unicast VRF red' in stdout and 'vrf blue' not in stdout
+    fail: |
+      blue leaked into red, or the VRF table came back empty -- the positive half of this check
+      exists so that "no output" cannot masquerade as "no leak"

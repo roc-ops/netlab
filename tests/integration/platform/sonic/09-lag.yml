@@ -14,3 +14,28 @@ nodes: [ s1, s2 ]
 links:
 - lag:
     members: [ s1-s2, s1-s2 ]
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  members:
+    description: BOTH PortChannel members are Selected by LACP, not just one
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 40
+    wait_msg: Waiting for LACP to select both members
+    exec: teamdctl PortChannel1 state
+    valid: |
+      stdout.count('selected: yes') == 2
+    fail: fewer than two members selected -- the aggregate is not actually aggregating
+  ospf_over_lag:
+    description: OSPF adjacency Full over the PortChannel, not over a member link
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 50
+    exec: vtysh -c "show ip ospf neighbor"
+    valid: |
+      'Full' in stdout and 'PortChannel1' in stdout

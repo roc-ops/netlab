@@ -43,3 +43,26 @@ configlets:
     {% endfor %}
      exit-address-family
     !
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  configlet_ok:
+    description: The raw FRR configlet injected by the files plugin is in the running config
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    exec: vtysh -c "show running-config"
+    valid: |
+      'maximum-prefix 100' in stdout
+    fail: the files escape hatch did not reach the device
+  session_still_up:
+    description: The session is Established with the configlet applied
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    show: ip bgp summary json
+    valid: |
+      ipv4Unicast.failedPeers == 0

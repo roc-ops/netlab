@@ -24,3 +24,43 @@ nodes: [ s1, s2 ]
 links:
 - s1:
   s2:
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  adjacency_v2:
+    description: OSPFv2 adjacency Full
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the OSPF adjacencies
+    exec: vtysh -c "show ip ospf neighbor"
+    valid: |
+      'Full' in stdout
+  adjacency_v3:
+    description: OSPFv3 adjacency Full
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 50
+    exec: vtysh -c "show ipv6 ospf6 neighbor"
+    valid: |
+      'Full' in stdout
+  datapath_v4:
+    description: IPv4 loopback-to-loopback datapath
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: ping -c4 -W2 {{ hostvars.s2.loopback.ipv4|ipaddr('address') }}
+    valid: |
+      '0% packet loss' in stdout
+  datapath_v6:
+    description: IPv6 loopback-to-loopback datapath
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: ping6 -c4 -W2 {{ hostvars.s2.loopback.ipv6|ipaddr('address') }}
+    valid: |
+      '0% packet loss' in stdout

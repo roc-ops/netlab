@@ -22,3 +22,47 @@ links:
   s2:
   tunnel.mode: gre
   ospf: false
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  real_gre_netdev:
+    description: A REAL kernel ip_gre netdev, not just a configured interface
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    exec: ip -d link show tun0
+    valid: |
+      'link/gre' in stdout and 'gre remote' in stdout
+    fail: tun0 is not a GRE netdev -- the plugin created something else, or nothing
+  addressed:
+    description: The tunnel carries the addresses netlab allocated on both AFs
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    exec: ip -br addr show tun0
+    valid: >-
+      '{{ interfaces|selectattr('ifname','equalto','tun0')|map(attribute='ipv4')|first|ipaddr('address') }}'
+      in stdout
+    fail: the tunnel has no IPv4 address -- the initial template must address tunnel interfaces itself
+  datapath_v4:
+    description: IPv4 across the tunnel
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 30
+    exec: >-
+      ping -c5 -W2
+      {{ hostvars.s2.interfaces|selectattr('ifname','equalto','tun0')|map(attribute='ipv4')|first|ipaddr('address') }}
+    valid: |
+      '0% packet loss' in stdout
+  datapath_v6:
+    description: IPv6 across the tunnel
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 30
+    exec: >-
+      ping6 -c4 -W2
+      {{ hostvars.s2.interfaces|selectattr('ifname','equalto','tun0')|map(attribute='ipv6')|first|ipaddr('address') }}
+    valid: |
+      '0% packet loss' in stdout
