@@ -25,3 +25,36 @@ nodes: [ s1, s2 ]
 links:
 - s1:
   s2:
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  isis:
+    description: IS-IS adjacency Up with the IPv6 topology
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the IS-IS adjacency
+    exec: vtysh -c "show isis neighbor"
+    valid: |
+      'Up' in stdout
+  isis_v6_route:
+    description: The remote loopback prefix is installed in the IPv6 RIB
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: vtysh -c "show ipv6 route isis"
+    valid: |
+      '{{ hostvars.s2.loopback.ipv6|ipaddr('network') }}' in stdout
+  bgp_v6:
+    description: iBGP IPv6 AF Established over the loopbacks
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the IPv6 iBGP session
+    show: bgp ipv6 unicast summary json
+    valid: |
+      peers['{{ hostvars.s2.loopback.ipv6|ipaddr('address') }}'].state == 'Established'

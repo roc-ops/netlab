@@ -27,3 +27,47 @@ addressing:
     ipv6: 2001:db8:1::/48
 nodes: [ s1, s2 ]
 links: [ s1-s2 ]
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+# NOTE: this row claims a control-plane and kernel-state result and nothing more. No traffic is
+# sent through an SRv6 SID here, and these checks deliberately do not pretend otherwise.
+validate:
+  isis:
+    description: IS-IS adjacency is Up
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the IS-IS adjacency
+    exec: vtysh -c "show isis neighbor"
+    valid: |
+      'Up' in stdout
+  kernel_end:
+    description: A real kernel seg6local End (uN) route exists
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: ip -6 route show table all
+    valid: |
+      'seg6local action End' in stdout
+  kernel_endx:
+    description: A real kernel seg6local End.X (uA) route exists
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: ip -6 route show table all
+    valid: |
+      'action End.X' in stdout
+  remote_locator:
+    description: The REMOTE node's locator was advertised by IS-IS and installed
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    wait_msg: Waiting for the remote SRv6 locator
+    exec: vtysh -c "show ipv6 route isis"
+    valid: |
+      '{{ hostvars.s2.srv6.locator }}' in stdout
+    fail: the remote locator never arrived -- cross-node advertisement is what this row claims

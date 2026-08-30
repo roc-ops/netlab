@@ -9,3 +9,37 @@ nodes: [ s1, s2 ]
 links:
 - s1:
   s2:
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  daemons:
+    description: BOTH ripd and ripngd are running -- ripngd was missing until issue 87
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    exec: grep -E "^(ripd|ripngd)=" /etc/frr/daemons
+    valid: |
+      'ripd=yes' in stdout and 'ripngd=yes' in stdout
+    fail: a RIP daemon is disabled -- config will be accepted and silently do nothing
+  route_v4:
+    description: A route is learned via RIPv2
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 60
+    wait_msg: Waiting for the RIPv2 update
+    exec: vtysh -c "show ip route rip"
+    valid: |
+      'R>*' in stdout
+  route_v6:
+    description: A route is learned via RIPng -- inert until issue 87, asserted now
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 60
+    wait_msg: Waiting for the RIPng update
+    exec: vtysh -c "show ipv6 route ripng"
+    valid: |
+      'R>*' in stdout
+    fail: no RIPng route -- check ripngd is enabled in netsim/devices/sonic.yml netlab_frr_daemons

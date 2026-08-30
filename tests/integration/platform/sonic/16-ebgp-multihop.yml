@@ -51,3 +51,45 @@ links:
 - s1:
   s2:
   bgp: False
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  static_v4:
+    description: The symbolic static to the remote loopback installed in the IPv4 RIB
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: vtysh -c "show ip route static"
+    valid: |
+      'S>*' in stdout
+    fail: the static never entered the RIB -- exactly the issue-87 failure; check the next hop resolves
+  static_v6:
+    description: The same static for IPv6 -- the AF the literal form never provided
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: vtysh -c "show ipv6 route static"
+    valid: |
+      'S>*' in stdout
+  session_v4:
+    description: The loopback-to-loopback multihop session is Established, IPv4
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the IPv4 multihop session
+    show: ip bgp summary json
+    valid: |
+      ipv4Unicast.failedPeers == 0 and ipv4Unicast.totalPeers == 1
+  session_v6:
+    description: The loopback-to-loopback multihop session is Established, IPv6
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the IPv6 multihop session
+    show: bgp ipv6 unicast summary json
+    valid: |
+      failedPeers == 0 and totalPeers == 1

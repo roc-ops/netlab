@@ -10,3 +10,35 @@ nodes: [ s1, s2 ]
 links:
 - s1:
   s2:
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  adjacency:
+    description: IS-IS adjacency is Up
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the IS-IS adjacency
+    exec: vtysh -c "show isis neighbor"
+    valid: |
+      'Up' in stdout
+  route_v4:
+    description: The remote loopback is installed in the IPv4 RIB via IS-IS
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: vtysh -c "show ip route isis"
+    valid: |
+      '{{ hostvars.s2.loopback.ipv4|ipaddr('address') }}' in stdout
+  route_v6:
+    description: The remote loopback prefix is installed in the IPv6 RIB via IS-IS
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: vtysh -c "show ipv6 route isis"
+    valid: |
+      '{{ hostvars.s2.loopback.ipv6|ipaddr('network') }}' in stdout

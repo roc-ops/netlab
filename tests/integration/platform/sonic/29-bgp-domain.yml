@@ -57,3 +57,53 @@ links:
   h2:
   ospf: False
   prefix: 172.16.2.0/24
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  rr_peers:
+    description: s1 keeps exactly its two red-domain peers
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the iBGP sessions
+    show: ip bgp summary json
+    valid: |
+      ipv4Unicast.totalPeers == 2 and ipv4Unicast.failedPeers == 0
+    fail: s1 has the wrong peer count -- the cross-domain session was not pruned
+  blue_isolated:
+    description: s4 (blue) has NO BGP neighbours -- the cross-domain session is pruned
+    nodes: [ s4 ]
+    devices: [ sonic ]
+    exec: vtysh -c "show ip bgp summary"
+    valid: |
+      'No BGP neighbors' in stdout
+    fail: s4 has a BGP session -- the domains are not isolated
+  reflection:
+    description: s3 (red) learns h2's prefix by route reflection and can reach it
+    nodes: [ s3 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for route reflection
+    exec: ping -c3 -W2 {{ hostvars.h2.interfaces[0].ipv4|ipaddr('address') }}
+    valid: |
+      '0% packet loss' in stdout
+  blue_no_route:
+    description: s4 (blue) has no route to h2 -- asserted as an unreachable datapath, not an absent string
+    nodes: [ s4 ]
+    devices: [ sonic ]
+    exec: ping -c2 -W2 {{ hostvars.h2.interfaces[0].ipv4|ipaddr('address') }} 2>&1 ; true
+    valid: |
+      'Network is unreachable' in stdout or '100% packet loss' in stdout
+    fail: |
+      s4 reached h2 -- domain isolation is not holding.
+      Deliberately a datapath check rather than a routing-table string. The first version of
+      this test ran 'show ip route <host-address>' and looked for '% Network not in table';
+      FRR prints that only for a PREFIX lookup and returns EMPTY output for a host address, so
+      the test failed while the topology was behaving correctly. Absence of a string is not
+      evidence of absence of a route. The 2>&1 matters too: 'Network is unreachable' is
+      written to STDERR, and validation only captures stdout -- a second way for a correct
+      result to read as a failure.

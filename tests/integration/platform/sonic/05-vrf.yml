@@ -13,3 +13,29 @@ links:
 - s1:
   s2:
   vrf: red
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  vrf_ospf:
+    description: OSPFv2 adjacency Full inside VRF red
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the per-VRF OSPF adjacency
+    exec: vtysh -c "show ip ospf vrf red neighbor"
+    valid: |
+      'Full' in stdout
+  not_in_default:
+    description: The default VRF has no OSPF -- what makes this a VRF result rather than a leak
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    exec: vtysh -c "show ip ospf neighbor"
+    valid: |
+      'OSPF is not enabled' in stdout and 'Full' not in stdout
+    fail: |
+      the default VRF has an OSPF adjacency, or the command returned nothing at all -- the
+      positive half of this check exists so empty output cannot satisfy the negative half

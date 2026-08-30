@@ -43,3 +43,25 @@ nodes:
 links:
 - s1:
   s2:
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  static_installed:
+    description: The IPv6 static route is installed, with a symbolically-resolved next hop
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 30
+    exec: vtysh -c "show ipv6 route static"
+    valid: |
+      'S>*' in stdout and '2001:db8:143:42::/64' in stdout
+  prefix_list:
+    description: The IPv6 prefix-list is present with its ge/le bounds
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    exec: vtysh -c "show ipv6 prefix-list"
+    valid: |
+      'ge 64 le 64' in stdout

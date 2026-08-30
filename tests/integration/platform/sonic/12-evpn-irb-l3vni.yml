@@ -49,3 +49,37 @@ links:
 - s2:
     vlan.access: blue
   h2:
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  l3vni:
+    description: The L3VNI is up in the tenant VRF
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the L3VNI
+    exec: vtysh -c "show evpn vni"
+    valid: |
+      'L3' in stdout and 'tenant' in stdout
+  symmetric_irb:
+    description: Symmetric IRB -- the remote subnet is reached via the L3VNI, not a bridged VNI
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    wait_msg: Waiting for the type-5 route
+    exec: vtysh -c "show ip route vrf tenant"
+    valid: |
+      'l3vni' in stdout
+  datapath:
+    description: Inter-subnet h1 -> h2 across the L3VNI
+    nodes: [ h1 ]
+    devices: [ linux ]
+    wait: 40
+    wait_msg: Waiting for the inter-subnet datapath
+    exec: ping -c5 -W2 {{ hostvars.h2.interfaces[0].ipv4|ipaddr('address') }}
+    valid: |
+      '0% packet loss' in stdout

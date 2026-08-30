@@ -46,3 +46,74 @@ links:
 - s2:
     vlan.access: red
   h2:
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+# This row is PARTIAL and the checks say so exactly. The Ethernet Segment and the EVPN control
+# plane are real and are asserted. The DUAL-HOMING IS NOT: s1 and s2 present different LACP
+# system MACs, so the host aggregates with exactly one of them (issue #93). The datapath check
+# below therefore proves reachability over a SINGLE leg -- it is not evidence of multihoming,
+# and lag_single_homed pins the defect so that fixing it fails this test and someone notices.
+#
+# WHICH switch wins is a race and is NOT stable -- measured s1-up/s2-down in one session and
+# s2-up/s1-down in another, three deploys each, consistent within a session and reversed
+# between them. The PortChannel MACs are generated per deploy, so there is nothing to prefer
+# one side. An earlier version of this check asserted "s2's ES is State: down" and passed for
+# hours before failing, reporting that the defect had been FIXED when all that had changed was
+# which switch the host picked. The check therefore measures the defect where it is
+# side-agnostic: on the HOST, where exactly one port ends up in the active LACP aggregator.
+validate:
+  host_addressed:
+    description: h1's SVI got an address derived from the VLAN prefix (the issue-87 fix)
+    nodes: [ h1 ]
+    devices: [ linux ]
+    exec: ip -o addr show vlan1000
+    valid: |
+      '{{ vlans.red.prefix.ipv4|ipaddr(200)|ipaddr('address') }}' in stdout
+    fail: the h1-fixaddr workaround did not apply -- h1 and h2 will be on different subnets
+  es_present:
+    description: The Ethernet Segment exists on the PortChannel and is advertised
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the Ethernet Segment
+    exec: vtysh -c "show evpn es"
+    valid: |
+      'PortChannel1' in stdout
+  evpn_session:
+    description: The EVPN control plane between the two switches is Established
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 50
+    show: bgp l2vpn evpn summary json
+    valid: |
+      peers['{{ hostvars.s2.loopback.ipv4|ipaddr('address') }}'].state == 'Established'
+  lag_single_homed:
+    description: KNOWN DEFECT (issue 93) -- the host aggregates with ONE switch, not both
+    nodes: [ h1 ]
+    devices: [ linux ]
+    level: warning
+    wait: 90
+    wait_msg: Waiting for LACP to settle before counting aggregated ports
+    exec: grep -A3 "Active Aggregator Info" /proc/net/bonding/bond1
+    valid: |
+      'Aggregator ID' in stdout and 'Number of ports: 1' in stdout
+    fail: |
+      Either the active LACP aggregator now has BOTH ports -- multihoming may work, re-check
+      and update this row and issue 93 -- or bond1 does not exist and the output was empty.
+      Read the printout before concluding which; an absent bond is not a working one.
+      This is asserted on the HOST rather than on a switch on purpose: which of s1/s2 wins the
+      aggregation is a race that has been observed both ways, so a check naming one side
+      reports a fixed defect when nothing has changed but the coin flip.
+  datapath_1leg:
+    description: h1 reaches h2 (over ONE leg -- see es_single_homed; not proof of multihoming)
+    nodes: [ h1 ]
+    devices: [ linux ]
+    wait: 40
+    wait_msg: Waiting for the overlay datapath
+    exec: ping -c5 -W2 {{ hostvars.h2.interfaces[0].ipv4|ipaddr('address') }}
+    valid: |
+      '0% packet loss' in stdout

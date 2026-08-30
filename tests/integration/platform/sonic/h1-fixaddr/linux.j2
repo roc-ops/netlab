@@ -12,8 +12,11 @@
 # version of this file wrote a literal 172.16.0.5/24; netlab's default VLAN pool later moved to
 # 172.18.0.0/24, which put h1 on a different subnet from h2 and made the recorded 0% loss
 # result impossible to reproduce -- silently, because the address was still applied successfully.
-# Host offset 200 is well clear of netlab's own id-based allocation, so it cannot collide with
-# an address netlab assigns to a real node.
+# Host offset 200 cannot collide with an address netlab assigns to a real node, and that is a
+# bound rather than an observation: netsim/defaults/const.yml sets MAX_NODE_ID: 150, enforced
+# as the max_value on the node id in netsim/augment/nodes.py, so netlab cannot allocate an
+# id-based host address above .150. Raising that constant is the one change that would
+# invalidate this offset.
 #
 # IPv4 only, deliberately: netlab leaves /proc/sys/net/ipv6/conf/{bond1,vlan1000}/disable_ipv6
 # set to 1 on this host, so an IPv6 address on the SVI is refused by the kernel (RTNETLINK

@@ -20,3 +20,33 @@ links:
 - s1:
   s2:
   vlan.access: red
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  svi_v4:
+    description: IRB SVI datapath, IPv4
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    wait_msg: Waiting for the bridge/SVI datapath
+    exec: >-
+      ping -c4 -W2
+      {{ hostvars.s2.interfaces|selectattr('ifname','equalto','Vlan1000')
+      |map(attribute='ipv4')|first|ipaddr('address') }}
+    valid: |
+      '0% packet loss' in stdout
+  svi_v6:
+    description: IRB SVI datapath, IPv6 -- the other half of a dual-stack VLAN
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: >-
+      ping6 -c3 -W2
+      {{ hostvars.s2.interfaces|selectattr('ifname','equalto','Vlan1000')
+      |map(attribute='ipv6')|first|ipaddr('address') }}
+    valid: |
+      '0% packet loss' in stdout

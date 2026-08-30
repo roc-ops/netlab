@@ -30,9 +30,10 @@ not, rather than marking the row green or deleting the claim.
 
 What that re-run changed:
 
-* **26 of 29 rows hold in full.** Several are stronger than they were recorded: `06` also has a
-  working **VPNv6** datapath, `11` also passes **IPv6** across the L2VNI, and `02`/`17`/`22` are
-  green on **both** address families. Those results were simply never recorded before.
+* **27 of 29 rows hold in full**, once the `20-ripv2` fix on this branch is counted.
+  Several are stronger than they were recorded: `06` also has a working **VPNv6** datapath,
+  `11` also passes **IPv6** across the L2VNI, and `02`/`17`/`22` are green on **both** address
+  families. Those results were simply never recorded before.
 * **`16-ebgp-multihop` was broken and is now fixed.** Its statics were hardcoded to addresses
   from a netlab pool that has since moved, so both multihop sessions sat in `Active` forever.
   Rewritten symbolically; verified Established on both AFs.
@@ -40,9 +41,10 @@ What that re-run changed:
   address from the same moved pool, which put the two hosts on different subnets and made the
   recorded 0% loss impossible. That part is fixed and verified. The **dual-homing itself does
   not form** -- see the row.
-* **`20-ripv2` is half-dead and was recorded as green.** The IPv4 half works. The IPv6 half
-  renders `router ripng`, is accepted by vtysh, and does nothing, because `ripngd` is never
-  started.
+* **`20-ripv2` was half-dead and recorded as green, and is now fixed.** The IPv4 half always
+  worked. The IPv6 half rendered `router ripng`, was accepted by vtysh, and did nothing,
+  because `ripngd` was never started. Fixed on this branch (issue #95) and verified on both
+  AFs.
 * **`10-vrrp-version` is confirmed still stuck**, exactly as #86 corrected it, with one new
   piece of evidence narrowing it further.
 
@@ -61,6 +63,24 @@ These tests were written against a separate `sonic_clab` device, which was retir
 of upstream's single-device shape (issue #86): the container now lives in the `clab:` block
 of `netsim/devices/sonic.yml` and its templates are named `<module>/sonic-clab.j2`.
 
+### Every row is now machine-checkable
+
+**All 29 topologies carry a `validate:` block.** Run `netlab up <file>` then `netlab validate`
+and the row's claim passes or fails on its own; it is no longer prose that nothing can contradict.
+That was the actual root cause of this suite rotting -- not the GRE flag, which was only the
+symptom that made someone look.
+
+Each block encodes what was measured by hand on 2026-08-29 and nothing more. None was written
+from the prose in this table: doing that would have replaced 29 unverified prose claims with 29
+unverified machine claims. Addresses inside the blocks are always derived from node data
+(`hostvars.s2.loopback.ipv4`, `vlans.red.prefix.ipv4`), never written as literals -- a hardcoded
+address is what rotted rows 16 and 21 in the first place. See
+[`../README.md`](../README.md) for the rules these blocks follow and the mistakes that produced
+them.
+
+Two rows assert a **known defect** at `level: warning` (`10-vrrp-version`, `21-evpn-multihoming`)
+so that the day someone fixes it the suite says so, instead of carrying a stale caveat forever.
+
 ### Legend
 
 `Y` = verified on 2026-08-29 against real device output. `PARTIAL` = the row's claim splits;
@@ -73,7 +93,7 @@ the result column says exactly which half was proven and which was disproven.
 | `03-bgp.yml` | bgp | Y | Y | Y -- eBGP Established on both AFs, 1 prefix received each way on each |
 | `04-isis.yml` | isis | Y | Y | Y -- L2 adjacency Up; the remote loopback is installed in both the IPv4 and the IPv6 RIB |
 | `05-vrf.yml` | vrf, ospf | Y | Y | Y -- OSPFv2 Full inside VRF red (`show ip ospf vrf all neighbor`); default VRF correctly has no OSPF. OSPFv3-in-VRF is row 26 |
-| `06-mpls-sr-l3vpn.yml` | isis, bgp, mpls, sr, vrf | Y | Y | Y, in full and then some -- IS-IS Up, LDP OPERATIONAL, **VPNv4 and VPNv6** Established, a real kernel MPLS label FIB (`ip -M route`: LDP transport, IS-IS SR and BGP VPN labels), red->red **ping 5/5 and ping6 4/4** at 0% loss across two labels, and the by-design one-way blue->red failure reproduces (`% Network not in table` on s1). The VPNv6 datapath had never been recorded. **Needs a one-time host prereq: `sudo modprobe mpls_router mpls_iptunnel`** |
+| `06-mpls-sr-l3vpn.yml` | isis, bgp, mpls, sr, vrf | Y | Y | Y, in full and then some -- IS-IS Up, LDP OPERATIONAL, **VPNv4 and VPNv6** Established, a real kernel MPLS label FIB (`ip -M route`: LDP transport, IS-IS SR and BGP VPN labels), red->red **ping 5/5 and ping6 4/4** at 0% loss across two labels, and the by-design one-way blue->red failure reproduces (`% Network not in table` on s1). The VPNv6 datapath had never been recorded. **The old "one-time host prereq: `sudo modprobe mpls_router mpls_iptunnel`" note was STALE and has been removed** -- netlab's `kmods:` mechanism already covers `mpls`/`sr`, and `netlab up` prints `Loading Linux kernel modules mpls-router,mpls-iptunnel` and loads them itself. A precondition living in a human's head rather than in the artifact is not a reproducible result |
 | `07-srv6.yml` | isis, srv6 | Y | Y | Y **as a control-plane and kernel-state claim, which is all it claims** -- real `seg6local` End (uN) and End.X (uA) routes on both nodes, cross-node locator advertisement confirmed in the IS-IS LSDB *and* as an installed remote-locator route (s1 has 5f00:0:2::/48 via IS-IS, s2 has 5f00:0:1::/48). **No traffic was ever sent through an SRv6 SID**; this row does not claim an SRv6 datapath and must not be read as one |
 | `08-vlan.yml` | vlan | Y | Y | Y -- IRB SVI + kernel bridge datapath, s1<->s2 IPv4 4/4 and IPv6 3/3, 0% loss. Needs a `sonic-clab.j2` override + kernel-sync, see below |
 | `09-lag.yml` | lag, ospf | Y | Y | Y -- LACP aggregate (teamd), **both** members `selected: yes` on both nodes, OSPF Full over `PortChannel1` |
@@ -87,8 +107,8 @@ the result column says exactly which half was proven and which was disproven.
 | `17-ospf-areas.yml` | ospf, ospf.areas plugin | Y | Y | Y -- `Area ID: 0.0.0.1 (Stub)` with 2 areas attached, adjacency Full in **both** OSPFv2 and OSPFv3 |
 | `18-bgp-originate.yml` | bgp | Y | Y | Y -- the originated 10.201.9.0/24 is received by the eBGP peer |
 | `19-bfd.yml` | ospf, bfd | Y | Y | Y -- **two** BFD sessions up per node (IPv4 and link-local IPv6) under OSPF, OSPF Full |
-| `20-ripv2.yml` | ripv2 | Y | Y | **PARTIAL, and the missing half was recorded as passing.** IPv4 holds: `R>* 10.8.0.2/32 [120/2]` learned via RIP. IPv6 is **dead**: the template renders `router ripng` with networks, vtysh accepts it, and `show ipv6 route ripng` is empty -- because `/etc/frr/daemons` has `ripngd=no` and the daemon never starts. Config that looks applied and does nothing. Cause is one line in a **device file**, out of this suite's scope to change: `netsim/devices/sonic.yml` maps `ripv2: [ ripd ]` where upstream `netsim/devices/frr.yml` has `ripv2: [ ripd, ripngd ]` |
-| `21-evpn-multihoming.yml` | lag, vlan, ospf, bgp, vxlan, evpn, evpn.multihoming plugin | Y | Y | **PARTIAL -- two independent defects, one fixed here, one not.** (a) FIXED: `h1-fixaddr/linux.j2` hardcoded `172.16.0.5/24` while the red VLAN is now 172.18.0.0/24, so the two hosts were on different subnets and the recorded 0% loss was impossible -- silently, because the address still applied cleanly. Now derived from the VLAN's own prefix; h1<->h2 verified **5/5, 0% loss**. (b) NOT FIXED, and it makes the word "dual-homed" wrong: **the LAG is single-homed in practice.** s2 reports the Ethernet Segment `State: down`, `DF status: non-df`, its `PortChannel1` is NO-CARRIER, and h1's bond shows `Number of ports: 1` in the active aggregator. s1 and s2 present **different LACP system MACs** (`1e:57:e1:d5:cf:38` vs `2a:db:d6:46:59:db`), so an LACP host can only ever aggregate with one of them; the rendered `evpn.multihoming` script sets `evpn mh es-id` and never programs a shared LACP system-id. The EVPN control plane is genuinely healthy (ESI advertised, s1 elected DF, s2 sees the remote VTEP with `df_pref`) -- so read this row as **ES + EVPN control plane proven, dual-homing NOT proven, datapath proven over a single leg**. Needs the `h1-fixaddr/` addon (a generic `linux`-device host-addressing workaround, not SONiC-specific) |
+| `20-ripv2.yml` | ripv2 | Y | Y | **Was half-dead and recorded as passing; now FIXED and Y on both AFs.** IPv4 always held. IPv6 was inert: the template rendered `router ripng` with its networks, vtysh **accepted** it, and `show ipv6 route ripng` stayed empty -- because `/etc/frr/daemons` had `ripngd=no` and the daemon never started. Config that looks applied and does nothing. Cause was one line in the device file: `netsim/devices/sonic.yml` mapped `ripv2: [ ripd ]` where upstream `netsim/devices/frr.yml` has `ripv2: [ ripd, ripngd ]`. Fixed in its own commit (a device-file change, so it wants independent review). Verified after: `ripd=yes` **and** `ripngd=yes`, `R>*` routes in both the IPv4 and the IPv6 RIB on both nodes, ping 4/4 and ping6 4/4. The device's `features.ripv2` **declaration** was updated to match in the same breath (`ipv4` -> `ipv4, ipv6`): starting the daemon without widening the flag would have left the device running RIPng while declaring it cannot, which is the `tunnel.gre` bug from #86 pointed the other way. `passive` stays unclaimed because it was never exercised |
+| `21-evpn-multihoming.yml` | lag, vlan, ospf, bgp, vxlan, evpn, evpn.multihoming plugin | Y | Y | **PARTIAL -- two independent defects, one fixed here, one not.** (a) FIXED: `h1-fixaddr/linux.j2` hardcoded `172.16.0.5/24` while the red VLAN is now 172.18.0.0/24, so the two hosts were on different subnets and the recorded 0% loss was impossible -- silently, because the address still applied cleanly. Now derived from the VLAN's own prefix; h1<->h2 verified **5/5, 0% loss**. (b) NOT FIXED, and it makes the word "dual-homed" wrong: **the LAG is single-homed in practice.** h1's bond shows `Number of ports: 1` in its active aggregator, with a Partner MAC equal to the `PortChannel1` MAC of whichever switch won; the losing switch reports its Ethernet Segment `State: down`, `DF status: non-df`, and `PortChannel1` NO-CARRIER. s1 and s2 present **different LACP system MACs**, so an LACP host can only ever aggregate with one of them; the rendered `evpn.multihoming` script sets `evpn mh es-id` and never programs a shared LACP system-id. **Which switch wins is a race and is NOT stable** -- measured s1-up/s2-down across three consecutive deploys in one session and s2-up/s1-down across three in another, so the specific MACs and side named in an earlier version of this row were recording a coin flip, not the defect. The EVPN control plane is genuinely healthy (ESI advertised, a DF elected, the remote VTEP seen with `df_pref`) -- so read this row as **ES + EVPN control plane proven, dual-homing NOT proven, datapath proven over a single leg**. Tracked as **issue #93**, and pinned by the `lag_single_homed` validation check, which counts aggregated ports on the HOST precisely because that is the one place the answer does not depend on which side won. Needs the `h1-fixaddr/` addon (a generic `linux`-device host-addressing workaround, not SONiC-specific) |
 | `22-ospfv3.yml` | ospf | Y | Y | Y -- both AFs Full, **ping 4/4 and ping6 4/4** across the loopbacks |
 | `23-isis-v6-bgp-v6.yml` | isis, bgp | Y | Y | Y -- IS-IS Up with the IPv6 topology installed, iBGP IPv6 AF Established over the loopbacks |
 | `24-routing-v6.yml` | routing | Y | Y | Y -- IPv6 static installed (`S>* 2001:db8:143:42::/64 via 2001:db8:100::2`) and the IPv6 prefix-list present with its `ge 64 le 64`. Note this row uses the **symbolic** `nexthop.node:` form and therefore did NOT rot when the pools moved -- the direct contrast with row 16 |
@@ -98,16 +118,21 @@ the result column says exactly which half was proven and which was disproven.
 | `28-files-maxprefix.yml` | bgp, files plugin | Y | Y | Y -- the raw FRR configlet lands in the running config (`neighbor 10.10.0.2 maximum-prefix 100`) and the session is Established |
 | `29-bgp-domain.yml` | bgp, ospf, bgp.domain plugin | Y | Y | Y, including the datapath -- s1 keeps exactly 2 (red) peers, the cross-domain s1<->s4 session is pruned, s3 has h2's prefix by RR reflection and **pings h2 3/3**, and s4 (blue) has zero BGP neighbours (`% No BGP neighbors found in VRF default`) and no route to h2 (`% Network not in table`, ping `Network is unreachable`) |
 
-Run with `netlab up <file>` from this directory (needs `docker-sonic-vs:latest` pulled locally
-and a `multilab` id that isn't in use -- these default to id 52).
+Run with `netlab up <file>` from this directory, then `netlab validate` (needs
+`docker-sonic-vs:latest` pulled locally and a `multilab` id that isn't in use -- these default
+to id 52). `netlab validate` re-reads the `validate:` block from the source file on each run,
+so a block can be iterated against a lab that is already up without redeploying it.
 
 ### Two things worth knowing before you re-run this suite
 
-**Do not trust `ml_autoid` to pick your id here.** It reads running `clab-ml-<id>-*` containers
-and its own reservation directory, but not netlab's own instance registry, so the two can
-disagree: on 2026-08-29 it allocated id 2, which `netlab up` then refused because netlab
-considered instance 2 to belong to another lab's directory. It failed safe -- but pin an id you
-have checked against `netlab status --all` rather than relying on the allocator.
+**Do not trust `ml_autoid` to pick your id here (issue #92).** It reads running
+`clab-ml-<id>-*` containers and its own reservation directory, but not netlab's own instance
+registry, so the two can disagree: on 2026-08-29 it allocated id 2, which `netlab up` then
+refused because netlab considered instance 2 to belong to another lab's directory. It failed
+safe -- but pin an id you have checked against `netlab status --all` rather than relying on the
+allocator. Note also that the documented cleanup for such a stale registration
+(`netlab status -i <id> --cleanup`) would have torn down the lab whose directory it names, so
+read what it points at before running it.
 
 **Read convergence at the same moment as the result.** Every result above was read after the
 lab settled; an overlay caught mid-convergence produces a false FAILURE just as readily as a

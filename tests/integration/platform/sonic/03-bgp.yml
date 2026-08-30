@@ -14,3 +14,38 @@ nodes:
 links:
 - s1:
   s2:
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+# The 60s waits are a MITIGATION, not a diagnosis, and are labelled as such deliberately.
+# During the #87 full sweep both checks here failed once, having retried for 40s. It has not
+# been reproducible since: BGP reaches Established within 5 seconds of the deploy on every
+# subsequent measurement (t+5/15/30/60s across three fresh deploys, failedPeers=0 every time),
+# and the row then passed eight consecutive deploy-and-validate cycles plus three repeat
+# validations against a live lab. The failing run's log was overwritten by those re-runs
+# before it was read -- that was avoidable and is the reason the cause is unknown rather than
+# merely unproven. Raising the wait cannot be claimed to fix something undiagnosed; it removes
+# the tightest window on the box's slowest path (FRR becoming ready), which is the only
+# candidate consistent with a session that is otherwise up in five seconds.
+validate:
+  bgp_v4:
+    description: eBGP IPv4 session Established
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 60
+    wait_msg: Waiting for the IPv4 BGP session
+    show: ip bgp summary json
+    valid: |
+      ipv4Unicast.failedPeers == 0 and ipv4Unicast.totalPeers == 1
+  bgp_v6:
+    description: eBGP IPv6 session Established
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 60
+    wait_msg: Waiting for the IPv6 BGP session
+    show: bgp ipv6 unicast summary json
+    valid: |
+      failedPeers == 0 and totalPeers == 1

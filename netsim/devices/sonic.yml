@@ -244,8 +244,17 @@ clab:
       bgp: true
       isis: true
     bfd: true
+    # ipv6 is claimed because it was RUN, not because FRR claims it: RIPng routes were
+    # verified in both directions on docker-sonic-vs (R>* 2001:db8:80:2::/64 [120/2] on s1,
+    # the mirror on s2) plus ping6 4/4, once netlab_frr_daemons started ripngd. Before that
+    # fix the module ran RIPv4 only, so ipv4-only was an accurate declaration; leaving it
+    # ipv4-only AFTER the fix would mean the device runs RIPng and declares it cannot --
+    # the mirror image of the tunnel.gre flag #86 corrected, which claimed more than the
+    # evidence. 'passive' is deliberately NOT claimed: FRR declares it and it was never
+    # exercised here, and an unrun claim is what this whole issue exists to remove.
     ripv2:
       ipv4: true
+      ipv6: true
     gateway:
       protocol: [ vrrp ]
       vrrp:

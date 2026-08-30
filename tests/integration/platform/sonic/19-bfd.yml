@@ -10,3 +10,28 @@ links:
 - s1:
   s2:
   ospf.bfd: True
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  sessions_up:
+    description: BFD sessions are up on BOTH address families under OSPF
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the BFD sessions
+    exec: vtysh -c "show bfd peers brief"
+    valid: |
+      stdout.count('up') >= 2 and 'Session count: 2' in stdout
+    fail: fewer than two BFD sessions -- one address family is not protected
+  ospf_full:
+    description: OSPF is Full with BFD attached
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: vtysh -c "show ip ospf neighbor"
+    valid: |
+      'Full' in stdout

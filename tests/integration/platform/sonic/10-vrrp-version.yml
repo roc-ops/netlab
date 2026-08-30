@@ -19,3 +19,36 @@ links:
   s2:
   gateway: true
   prefix: 172.31.43.0/24
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+# This row is PARTIAL and the checks say so. The version pin is real and is asserted. VRRP does
+# NOT leave Initialize on this image -- that is asserted too, as a known-state check, so that the
+# day it starts working this test fails and someone finds out. A test that quietly tolerates both
+# outcomes would tell us nothing, which is how the "Master state confirmed" claim survived.
+validate:
+  version_pin:
+    description: VRRP is pinned to protocol version 2 -- what this row actually claims
+    nodes: [ s1, s2 ]
+    devices: [ sonic ]
+    wait: 40
+    wait_msg: Waiting for vrrpd
+    exec: vtysh -c "show vrrp"
+    valid: |
+      'Protocol Version                        2' in stdout
+  known_stuck:
+    description: KNOWN DEFECT -- vrrpd stays in Initialize on this image; fail here means it was fixed
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    level: warning
+    wait: 60
+    wait_msg: Waiting for vrrpd before judging its state
+    exec: vtysh -c "show vrrp"
+    valid: |
+      'Virtual Router ID' in stdout and 'Initialize' in stdout
+    fail: |
+      VRRP LEFT Initialize -- good news, but this row's recorded defect is stale, update it.
+      The 'Virtual Router ID' half ensures an empty or missing vrrpd cannot read as "stuck".

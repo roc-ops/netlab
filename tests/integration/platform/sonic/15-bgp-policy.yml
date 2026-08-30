@@ -48,3 +48,28 @@ links:
 - s2:                                 # s2's connected stub, redistributed into BGP
   type: stub
   prefix: 10.43.99.0/24
+
+# Validation blocks (issue #87). Every check below encodes a result that was verified by hand
+# on this lab first; none of them is a claim nobody measured. Addresses are derived from node
+# data rather than written as literals -- a hardcoded address is exactly what rotted rows 16
+# and 21, and a test asset that hardcodes an address the framework allocates is a rot generator.
+
+validate:
+  inbound_policy:
+    description: locpref, weight and community all applied to the received prefix
+    nodes: [ s1 ]
+    devices: [ sonic ]
+    wait: 50
+    wait_msg: Waiting for the prefix to arrive
+    exec: vtysh -c "show ip bgp 10.43.99.0/24"
+    valid: |
+      'localpref 250' in stdout and 'weight 50' in stdout and '65001:100' in stdout
+    fail: at least one of locpref/weight/community did not take
+  outbound_med:
+    description: The compound attribute produced an outbound route-map that set MED on the far side
+    nodes: [ s2 ]
+    devices: [ sonic ]
+    wait: 40
+    exec: vtysh -c "show ip bgp {{ hostvars.s1.loopback.ipv4 }}"
+    valid: |
+      'metric 111' in stdout
