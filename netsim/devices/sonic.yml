@@ -188,15 +188,11 @@ clab:
       passive: true
       # MLAG does not work: docker-sonic-vs has no mclagd, so the pair never forms
       # (lag/10-mlag: "X1 cannot establish a LAG with both switches in MLAG pair", then the
-      # datapath is lost). The peer-link address below is nevertheless declared, because the
-      # retired sonic_clab device declared it and this commit is a convergence, not a change of
-      # feature support: netsim/modules/lag.py gates the peer-link machinery on
-      # "lag.mlag OR evpn.multihoming.lag", and evpn.multihoming.lag is declared below in any
-      # case. Whether to turn MLAG off outright is a separate decision on its own evidence.
-      mlag:
-        peer:
-          ip: 169.254.127.0/31   # static /31 peer-link (EOS pattern); SONiC has no MLAG
-                                 # keepalive protocol to negotiate one over -- config-plane only
+      # datapath is lost). Declared off so netlab rejects MLAG peer-link topologies on this
+      # device instead of building one that silently does not work. ESI-LAG (declared under
+      # evpn.multihoming below) is unaffected: since ipspace/netlab#3835 the peer-link is gated
+      # on lag.mlag alone, while the 2:1 M-side still accepts MLAG or ESI-LAG.
+      mlag: false
     vxlan: true              # L2VNI via the FRR/kernel path (orchagent cannot program the VS
                              # dataplane), see vxlan/sonic-clab.j2
     evpn:
