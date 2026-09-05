@@ -115,12 +115,7 @@ else
 fi
 {%     endif %}
 {%   endif %}
-{#   Set the MTU through CONFIG_DB. Now that the containerlab endpoint is ethN and the port is
-     the TAP syncd creates for it (see the clab: block in devices/sonic.yml), portmgrd programs
-     the CONFIG_DB MTU onto the netdev -- measured: "config interface mtu Ethernet4 9000" gives
-     netdev 9000, CONFIG_DB 9000 and APPL_DB 9000. An earlier version had to use "ip link set"
-     because the port was the raw veth and CONFIG_DB never reached it; that also left
-     "show interfaces status" reporting a different MTU from the kernel. #}
+{#   The port is the TAP syncd manages, so portmgrd programs the CONFIG_DB MTU onto the netdev. #}
 {#   L2 switchports (LAG members and VLAN access/trunk ports) reject a direct MTU set once
      they are members ("'interface_name' is in portchannel!" / "is in vlan"); the
      PortChannel/port MTU propagates, so skip them #}
@@ -130,12 +125,9 @@ config interface mtu {{ l.ifname }} {{ l.mtu }}
 !
 {% endfor %}
 #
-# portmgrd brings every front-panel port up admin-DOWN at boot, so start the ports this lab
-# uses. Only these: the unmapped ports have TAPs too, and starting them is noise. IPs need no
-# help -- intfmgrd programs the CONFIG_DB INTERFACE entries onto the TAP (measured: "config
-# interface ip add" is on the netdev within a second).
+# portmgrd brings every front-panel port up admin-down at boot; start the ones this lab uses.
 #
-{% for l in netlab_interfaces if l.ifname.startswith('Ethernet') %}
+{% for l in interfaces if l.ifname.startswith('Ethernet') %}
 config interface startup {{ l.ifname }}
 {% endfor %}
 #

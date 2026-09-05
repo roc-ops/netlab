@@ -146,8 +146,8 @@ fallback (see `netsim/devices/sonic.yml`'s `group_vars.ansible_network_os` inher
 the parent `sonic` device). Only these needed a real `sonic-clab.j2`, all ported (mostly
 verbatim) from our out-of-tree reference and re-verified live here:
 
-* `initial` -- interface/loopback/VLAN/PortChannel bring-up via the `config` CLI, CONFIG_DB->
-  kernel sync for routed ports, FRR daemon enable.
+* `initial` -- interface/loopback/VLAN/PortChannel bring-up via the `config` CLI, FRR daemon
+  enable.
 * `bgp` -- `no router bgp` reset wrapper (deploy-config strips the reset line on first apply).
 * `vlan` -- switchport membership via `config vlan member add`, **plus a kernel bridge sync**
   (docker-sonic-vs's `vlanmgrd` races at boot and often never mirrors `VLAN_MEMBER` rows written

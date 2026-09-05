@@ -119,14 +119,9 @@ clab:
   # key-value passthrough loop, so this device needs no provider template of its own.
   image: docker-sonic-vs:latest
   mtu: 1500
-  # docker-sonic-vs builds its port map from the ethN netdevs present when it boots
-  # (start.sh: lanemap.ini <- ethN, port_config.ini <- lanemap) and syncd then creates a
-  # TAP named Ethernet<4n> for each mapped port, bridged to eth<n+1>. The containerlab
-  # endpoint must therefore be ethN; Ethernet<4n> is the SONiC-side name netlab configures.
-  # Injecting the veth as Ethernet0 directly leaves the lane map empty, makes syncd's
-  # TAP creation fail (TUNSETIFF: name in use), and detaches SONiC's port state and
-  # admin control from the link entirely. eth0 is the management interface, and this
-  # device's ifindex starts at 0 (Ethernet{ifindex * 4}), hence the +1.
+  # docker-sonic-vs maps its front-panel ports from the ethN netdevs present at boot
+  # (eth1 -> Ethernet0): the containerlab endpoint is ethN, Ethernet<4n> is the SONiC-side
+  # name netlab configures. eth0 is management and ifindex starts at 0, hence the +1.
   interface:
     name: "eth{ifindex + 1}"
   node:
