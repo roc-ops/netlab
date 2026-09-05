@@ -9,7 +9,7 @@ from box import Box
 from ...augment import devices
 from ...cli import external_commands
 from ...data import append_to_list, filemaps, get_empty_box
-from ...utils import log, strings
+from ...utils import ifstate, log, strings
 from .. import (
   READ_ONLY_SUFFIX,
   SHARED_PREFIX,
@@ -142,6 +142,18 @@ class Containerlab(_Provider):
     cmd = strings.eval_format_list(cmd,{'intf': args.intf.replace('/','-')})
     node_name = self.get_node_name(node.name,topology)
     return strings.string_to_list(f'sudo ip netns exec {node_name}') + cmd
+
+  def get_interface_status(self, node: Box, topology: Box) -> dict:
+    c_name = self.get_node_name(node.name, topology)
+    out = external_commands.run_command(
+            f'sudo ip netns exec {c_name} ip -d -j link',
+            check_result=True, ignore_errors=True, return_stdout=True, run_always=True)
+    if not isinstance(out, str):
+      return {}
+    try:
+      return ifstate.parse_ip_link(out)
+    except ValueError:
+      return {}
 
   def set_tc(self, node: Box, topology: Box, intf: Box, error: bool = True) -> None:
     c_name = self.get_node_name(node.name,topology)
