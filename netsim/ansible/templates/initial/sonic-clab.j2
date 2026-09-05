@@ -115,39 +115,29 @@ else
 fi
 {%     endif %}
 {%   endif %}
-{#   Set the MTU on the kernel netdev with "ip link set", NOT through "config interface mtu".
-     On the interfaces containerlab injects for netlab links, "config interface mtu" writes
-     CONFIG_DB and never reaches the netdev -- measured on a live node: CONFIG_DB reported 1548
-     while the interface was still at 1500.
-
-     "ip link set" DOES reach the netdev, and it programs the value literally, so the value
-     passed here is netlab's MTU with no adjustment. An earlier version of this template added
-     +48 to compensate for the CONFIG_DB path; that adjustment was doubly wrong -- the write it
-     compensated for never landed, and where a write does land it needs no compensation, so a
-     +48 would leave every interface 48 bytes above its peers and stall OSPF in ExStart.
-     Verified: "ip link set ... mtu 9000" on a jumbo link yields netdev MTU 9000 on both ends
-     and an OSPF adjacency that reaches Full. #}
+{#   Set the MTU through CONFIG_DB. Now that the containerlab endpoint is ethN and the port is
+     the TAP syncd creates for it (see the clab: block in devices/sonic.yml), portmgrd programs
+     the CONFIG_DB MTU onto the netdev -- measured: "config interface mtu Ethernet4 9000" gives
+     netdev 9000, CONFIG_DB 9000 and APPL_DB 9000. An earlier version had to use "ip link set"
+     because the port was the raw veth and CONFIG_DB never reached it; that also left
+     "show interfaces status" reporting a different MTU from the kernel. #}
 {#   L2 switchports (LAG members and VLAN access/trunk ports) reject a direct MTU set once
      they are members ("'interface_name' is in portchannel!" / "is in vlan"); the
      PortChannel/port MTU propagates, so skip them #}
 {%   if l.mtu is defined and l.mtu >= 1500 and not (l.virtual_interface|default(False)) and l.lag._parentindex is not defined and l.vlan.access_id is not defined and l.vlan.trunk_id is not defined %}
-ip link set {{ l.ifname }} mtu {{ l.mtu }}
+config interface mtu {{ l.ifname }} {{ l.mtu }}
 {%   endif %}
 !
 {% endfor %}
 #
-# docker-sonic-vs's intfmgrd/orchagent do not program routed-port IPs from CONFIG_DB onto the
-# kernel netdev (loopbacks work; routed ports do not), so BGP/OSPF over links can't come up
-# without this. Bring the data ports admin-up and mirror the CONFIG_DB INTERFACE IPs onto the
-# kernel netdev. Idempotent.
+# portmgrd brings every front-panel port up admin-DOWN at boot, so start the ports this lab
+# uses. Only these: the unmapped ports have TAPs too, and starting them is noise. IPs need no
+# help -- intfmgrd programs the CONFIG_DB INTERFACE entries onto the TAP (measured: "config
+# interface ip add" is on the netdev within a second).
 #
-for p in $(redis-cli -n 4 keys "PORT|Ethernet*" 2>/dev/null | sed 's/PORT|//'); do
-  config interface startup "$p" >/dev/null 2>&1 || true
-done
-redis-cli -n 4 keys "INTERFACE|Ethernet*|*" 2>/dev/null | while IFS= read -r k; do
-  ifc=$(echo "$k" | cut -d'|' -f2); addr=$(echo "$k" | cut -d'|' -f3)
-  [ -n "$addr" ] && ip addr add "$addr" dev "$ifc" 2>/dev/null || true
-done
+{% for l in netlab_interfaces if l.ifname.startswith('Ethernet') %}
+config interface startup {{ l.ifname }}
+{% endfor %}
 #
 # Enable the FRR daemons needed by the configured modules (docker-sonic-vs ships most of them
 # disabled) and restart FRR once, only if something actually changed.
