@@ -19,6 +19,15 @@ They come apart. Issue #86 found a row recorded as "passed live, 0% loss" that c
 **created**; fixing that let it reach a deploy that then failed for a second, unrelated reason.
 A row that creates is not a row that passes.
 
+## Re-run 2026-09-05: all 29 rows, twice, on `fix/sonic-clab-port-naming`
+
+The containerlab endpoint of every SONiC port is now `ethN` and the port is the TAP
+`docker-sonic-vs` creates for it (`Ethernet<4n>`), so SONiC's own port state is real. Run 1 on
+that change held 28/29: `06-mpls-sr-l3vpn` lost its IPv4 L3VPN datapath because the kernel
+answered ARP on the veth as well as the port and labelled traffic landed on the veth. Run 2, with
+ARP suppressed on the veth, held 29/29 -- `10` and `21` still pass only through their
+known-defect checks, nothing there changed.
+
 ## Status: the whole suite was re-run live on 2026-08-29 (issue #87)
 
 **All 29 topologies were run through `netlab create`, deployed with `netlab up`, and had their

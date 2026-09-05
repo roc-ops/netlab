@@ -717,6 +717,9 @@ See also [](caveats-sros) caveats for further details.
 
 The `sonic` device also runs under *containerlab* with the community `docker-sonic-vs` image; see [](build-sonic-container) for how to obtain it and how the two deployments differ. The two are not interchangeable: `docker-sonic-vs` is a single monolithic container with FRR's `vtysh` running directly in it, while the VM runs FRR inside a nested `bgp` sub-container. Everything specific to the container lives in the `clab:` block of `devices/sonic.yml`, and the templates it needs of its own are named `<module>/sonic-clab.j2`.
 
+* Under *containerlab* every port is two kernel interfaces: the wire veth `ethN` and the port
+  `Ethernet<4n>` that SONiC creates for it. Configure and address only the port; *netlab*
+  suppresses ARP on the veth.
 * You supply your own `docker-sonic-vs:latest` image (build it from the
   [sonic-buildimage](https://github.com/sonic-net/sonic-buildimage) `docker-sonic-vs` target, or
   pull a prebuilt one); *netlab* does not ship or distribute it.
@@ -734,10 +737,10 @@ The `sonic` device also runs under *containerlab* with the community `docker-son
 * Most FRR daemons ship disabled in `/etc/frr/daemons` by default (to save resources); the
   initial configuration enables the ones the configured modules need, restarts FRR, and then
   waits until every enabled daemon actually answers `vtysh` before the next module script runs.
-* MPLS/SR-MPLS labs need a one-time host prerequisite before `netlab up`: `sudo modprobe
-  mpls_router mpls_iptunnel`. Once loaded, `/proc/sys/net/mpls/*` appears in every container's
-  network namespace (even already-running ones), giving a real kernel MPLS label FIB
-  (`ip -M route`), not just a control-plane proof.
+* MPLS/SR-MPLS labs need the `mpls_router` and `mpls_iptunnel` kernel modules on the host;
+  *netlab* loads them before deploying the lab (the `mpls` and `sr` modules declare them).
+  With them, `/proc/sys/net/mpls/*` appears in every container's network namespace, giving a
+  real kernel MPLS label FIB (`ip -M route`), not just a control-plane proof.
 * Module support is broad and FRR-delegated (`ospf`, `bgp`, `isis`, `vrf`, `bfd`, `mpls`, `sr`,
   `srv6`, `vlan`, `lag`, `vxlan`, `evpn`, `evpn.multihoming`, `gateway`/`vrrp.version`, `ripv2`,
   `routing`, `tunnel.gre`, `bgp.session`/`bgp.policy`/`bgp.originate`/`bgp.domain`/`ebgp.multihop`,
