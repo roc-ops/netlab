@@ -50,7 +50,7 @@ def change_status(topology: Box, callback: typing.Callable[[Box,Box], None]) -> 
     lock.acquire()
     if os.path.exists(status_file):                       # If the status file exists, read it
       try:
-        status = Box().from_yaml(filename=status_file,default_box=True,box_dots=True)
+        status = Box().from_yaml(filename=status_file,default_box=True,default_box_none_transform=False,box_dots=True)  # same Box settings as data.get_box(), so None values survive
       except:
         log.fatal(f'Cannot read lab status file {status_file}')
     else:                                                 # Otherwise, create an empty status
@@ -72,7 +72,7 @@ def read_status(topology: Box) -> Box:
     return get_empty_box()
   
   try:
-    return Box().from_yaml(filename=status_file,default_box=True,box_dots=True)
+    return Box().from_yaml(filename=status_file,default_box=True,default_box_none_transform=False,box_dots=True)  # same Box settings as data.get_box(), so None values survive
   except:
     log.fatal(f'Cannot read lab status file {status_file}')
     return get_empty_box()

@@ -15,7 +15,7 @@ from box import Box
 from .. import providers
 from ..data import get_box, get_empty_box
 from ..outputs import common as outputs_common
-from ..utils import log, status, strings
+from ..utils import ifstate, log, status, strings
 from ..utils import read as _read
 from . import parser_add_verbose, parser_lab_location
 
@@ -152,8 +152,49 @@ def load_provider_status(p_status: dict, provider: str, topology: Box) -> None:
   if not provider in p_status:
     p_status[provider] = p_module.call('get_lab_status') or get_empty_box()
 
-def fetch_node_status(ls: Box, topology: Box) -> None:
+#
+# Pair observed interfaces across nodes and attach them (plus derived link
+# state) to the lab state Box, keyed by netlab interface name
+#
+def attach_interface_status(ls: Box, topology: Box, raw: dict) -> None:
+  pairs = ifstate.pair_interfaces(raw)
+  netdev_to_ifname: dict = {}                          # (node, netdev) -> netlab ifname
+  for n_name,n_data in topology.nodes.items():
+    for intf in n_data.get('interfaces',[]):
+      netdev_to_ifname[(n_name, intf.get('clab.name',intf.ifname))] = intf.ifname
+
+  # Feed derive_links from plain dicts built here, before they go into 'ls' --
+  # keeps derive_links independent of the lab-state Box's own conversion
+  # config and avoids an extra Box round-trip on data about to be re-merged
+  # into ls anyway.
+  node_interfaces: dict = {}                           # node -> {netlab ifname: entry}
+  for n_name,n_data in topology.nodes.items():
+    if not raw.get(n_name):                            # no interface data (hookless provider) -> no key at all
+      continue
+    intf_status: dict = {}
+    for intf in n_data.get('interfaces',[]):
+      netdev = intf.get('clab.name',intf.ifname)
+      data = raw[n_name].get(netdev)
+      if data is None:
+        continue
+      entry = { k: data.get(k) for k in ('admin','carrier','state') }
+      if netdev != intf.ifname:
+        entry['name'] = netdev
+      peer = pairs.get((n_name,netdev))
+      entry['peer'] = None if peer is None else {
+        'node': peer[0], 'ifname': netdev_to_ifname.get(peer, peer[1]) }
+      intf_status[intf.ifname] = entry
+    node_interfaces[n_name] = intf_status
+    ls.nodes[n_name].interfaces = intf_status
+
+  ls.links = ifstate.derive_links(
+    [ { 'linkindex': l.linkindex, 'interfaces': [ {'node': i.node, 'ifname': i.ifname} for i in l.interfaces ] }
+      for l in topology.get('links',[]) ],
+    node_interfaces)
+
+def fetch_node_status(ls: Box, topology: Box, interfaces: bool = False) -> None:
   p_status: dict = {}
+  raw: dict = {}                                       # node -> parse_ip_link output (netdev keyed)
   for n_name,n_data in topology.nodes.items():
     n_ext = outputs_common.adjust_inventory_host(
               node=topology.nodes[n_name],
@@ -185,8 +226,13 @@ def fetch_node_status(ls: Box, topology: Box) -> None:
       node_stat.provider_name = wk_name
       wk_state = p_status[n_provider].get(wk_name,None) or p_status[n_provider].get(n_name,None) or get_empty_box()
       node_stat.status = wk_state.get('status','Unknown')
+      if interfaces:
+        raw[n_name] = providers.execute_node('get_interface_status',n_data,topology) or {}
 
     ls.nodes[n_name] = node_stat
+
+  if interfaces:
+    attach_interface_status(ls,topology,raw)
 
   for t_name,t_data in topology.tools.items():
     n_provider = 'clab'
@@ -216,6 +262,16 @@ def show_lab_nodes(ls: Box, topology: Box) -> None:
     rows.append(row)
 
   strings.print_table(heading,rows)
+
+def show_lab_interfaces(ls: Box) -> None:
+  rows = []
+  for n_name,n_data in ls.nodes.items():
+    for ifname,i in n_data.get('interfaces',{}).items():
+      peer = f"{i.peer.node}:{i.peer.ifname}" if i.get('peer') else ''
+      rows.append([ n_name, ifname, i.get('name',''), i.state, 'yes' if i.carrier else 'no', peer ])
+  if rows:
+    print()
+    strings.print_table([ 'node', 'interface', 'netdev', 'state', 'carrier', 'peer' ], rows)
 
 def print_lab_log(log: typing.List) -> None:
   if not log:
@@ -275,13 +331,15 @@ def show_lab(args: argparse.Namespace,lab_states: Box) -> None:
     print_lab_log(lab_state.log)
     return
 
-  fetch_node_status(lab_state,topology)
+  fetch_node_status(lab_state,topology,interfaces=args.format != 'text' or bool(log.VERBOSE))
   if args.format != 'text':
     print_result(lab_state,args.format)
     return
 
   show_lab_instance(iid,lab_state)
   show_lab_nodes(lab_state,topology)
+  if log.VERBOSE:
+    show_lab_interfaces(lab_state)
   if lab_status != 'started':
     print()
     log.warning(
