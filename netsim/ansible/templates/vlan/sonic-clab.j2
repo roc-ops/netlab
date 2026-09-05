@@ -2,16 +2,9 @@
 #
 # SONiC vlan module — switchport membership via the config CLI (access and trunk).
 # VLANs themselves (config_db `Vlan<id>`) are created by initial/sonic-clab.j2 BEFORE the
-# SVIs get addressed; this template adds port membership, THEN syncs it to the kernel itself
-# (see the sync block below) -- docker-sonic-vs's vlanmgrd races at boot and often never
-# mirrors VLAN_MEMBER rows written during the first deploy (a vlanmgrd restart also WIPES
-# bridge state without replaying CONFIG_DB), so relying on it alone silently leaves the L2
-# datapath down (measured when the port was still the raw containerlab veth: config_db had
-# the VLAN_MEMBER row, but Ethernet0 had no `master Bridge` and cross-node ping failed). With
-# the port now the TAP syncd manages, a runtime `config vlan member del/add` does reach the
-# kernel bridge on its own; the first-deploy race has not been re-measured, so the sync stays
-# as an idempotent backstop. Idempotency for the config_db writes is checked against
-# config_db (VLAN_MEMBER rows); the kernel sync below is separately idempotent.
+# SVIs get addressed; this template adds port membership, then syncs it to the kernel itself:
+# vlanmgrd can miss VLAN_MEMBER rows written during the first deploy (measured on the raw-veth
+# port, not re-measured on the TAP), so the sync below is an idempotent backstop.
 set -e
 set -x
 {# access (untagged) members #}
