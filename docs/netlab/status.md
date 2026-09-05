@@ -37,6 +37,32 @@ options:
 You can use the `--format json` or `--format yaml` option to display the lab status in automation-friendly format
 ```
 
+(netlab-status-interfaces)=
+### Observed interface and link state
+
+For containerlab nodes, the JSON and YAML output of a lab instance (**netlab status
+--instance**) includes the observed state of each interface read from the container's
+network namespace, and a per-link summary. The text output shows the same data as a
+table, but only with `--verbose` — plain text output does not read the container
+namespaces.
+
+* `nodes.<node>.interfaces.<ifname>`: `admin` (interface enabled), `carrier` (link
+  signal), `state` (`up`, `down`, `lowerlayerdown`, `unknown`), `peer` (the interface
+  at the other end of the veth, found by matching the kernel's peer index, or `null`
+  when there is no peer), and `name` when the container netdev name differs from the
+  netlab interface name.
+* `links[]`: `linkindex`, `state` (`up` when all ends have carrier, `down` when
+  none, `partial` in between, `unknown` when it cannot be determined), `wired`
+  (true when the observed peers match the topology, `null` when no end has a peer —
+  a multi-access link is bridged in the host namespace), and `interfaces`.
+
+Nodes whose provider cannot report this omit the `interfaces` key entirely, and
+their links are `state: unknown`, `wired: null`.
+
+Collecting the interface state runs `ip link` in each container's network namespace
+through `sudo`, so the JSON/YAML output and `--verbose` need passwordless sudo, like
+[**netlab tc**](tc.md).
+
 ## Display Lab Instance State
 
 The **netlab status** command displays the selected lab instance and its VMs and containers:
