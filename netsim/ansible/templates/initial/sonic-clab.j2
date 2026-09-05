@@ -127,8 +127,18 @@ config interface mtu {{ l.ifname }} {{ l.mtu }}
 #
 # portmgrd brings every front-panel port up admin-down at boot; start the ones this lab uses.
 #
+# The wire veth (ethN) and the port TAP (Ethernet<4n>) are both kernel interfaces on this
+# node and both see every frame. Left alone, the kernel also answers ARP for the port's
+# addresses on ethN with ethN's MAC, and the neighbour then sends unicast to the veth instead
+# of the port -- plain IPv4 still arrives (the kernel accepts it on ethN), but labelled
+# traffic is dropped, because MPLS input is enabled on the port only. Only the port may
+# answer ARP.
+#
 {% for l in interfaces if l.ifname.startswith('Ethernet') %}
 config interface startup {{ l.ifname }}
+{%   if l.clab.name is defined %}
+sysctl -w net.ipv4.conf.{{ l.clab.name }}.arp_ignore=8
+{%   endif %}
 {% endfor %}
 #
 # Enable the FRR daemons needed by the configured modules (docker-sonic-vs ships most of them
