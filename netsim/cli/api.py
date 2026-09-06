@@ -5,13 +5,14 @@
 import argparse
 import base64
 import binascii
-import contextlib
 import datetime as dt
 import hmac
-import io
 import json
 import os
+import shlex
+import signal
 import ssl
+import subprocess
 import tempfile
 import threading
 import time
@@ -20,15 +21,10 @@ import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import IO, Any, Callable, Dict, List, Optional, Tuple
 
 from ..utils import log
-from . import collect as netlab_collect
-from . import create as netlab_create
-from . import down as netlab_down
 from . import external_commands
-from . import status as netlab_status
-from . import up as netlab_up
 
 DEFAULT_DATA_DIR = Path(tempfile.gettempdir()) / "netlab" / "api"
 
@@ -172,35 +168,55 @@ def add_opt(args: List[str], payload: Dict[str, Any], key: str, opt: str) -> Non
   args += [opt, str(value)]
 
 
-def action_runner(payload: Dict[str, Any], workdir: Path) -> Tuple[Callable[..., Any], List[str]]:
+"""
+netlab_command: build the argument list for a netlab command executed as a subprocess
+
+NETLAB_SCRIPT is the netlab executable this server was started from. lab_commands sets it
+before it dispatches the command, and external_commands uses it the same way.
+"""
+def netlab_command(args: List[str]) -> List[str]:
+  from . import NETLAB_SCRIPT
+
+  return [NETLAB_SCRIPT] + args
+
+
+"""
+status_args: the 'netlab status' arguments selecting one lab instance or all of them
+
+A status job reports the CLI text and the /status endpoint asks for JSON, but both have to
+select the lab instance in the same way.
+"""
+def status_args(instance: Optional[str]) -> List[str]:
+  return ["--instance", instance] if instance else ["--all"]
+
+
+def action_command(payload: Dict[str, Any], workdir: Path) -> List[str]:
   action = (payload.get("action") or "up").strip().lower()
 
-  def run_up() -> Tuple[Callable[..., Any], List[str]]:
-    return netlab_up.run, [resolve_topology(payload, workdir)]
+  def run_up() -> List[str]:
+    return ["up", resolve_topology(payload, workdir)]
 
-  def run_create() -> Tuple[Callable[..., Any], List[str]]:
-    return netlab_create.run, [resolve_topology(payload, workdir)]
+  def run_create() -> List[str]:
+    return ["create", resolve_topology(payload, workdir)]
 
-  def run_down() -> Tuple[Callable[..., Any], List[str]]:
-    args: List[str] = []
+  def run_down() -> List[str]:
+    args: List[str] = ["down"]
     add_flag(args, payload, "cleanup", "--cleanup")
-    return netlab_down.run, args
+    return args
 
-  def run_collect() -> Tuple[Callable[..., Any], List[str]]:
-    args: List[str] = []
+  def run_collect() -> List[str]:
+    args: List[str] = ["collect"]
     add_opt(args, payload, "instance", "--instance")
     add_opt(args, payload, "collectOutput", "--output")
     add_opt(args, payload, "collectTar", "--tar")
     add_flag(args, payload, "collectCleanup", "--cleanup")
-    return netlab_collect.run, args
+    return args
 
-  def run_status() -> Tuple[Callable[..., Any], List[str]]:
-    args: List[str] = ["--all"]
-    if payload.get("instance"):
-      args = ["--instance", str(payload.get("instance"))]
-    return netlab_status.run, args
+  def run_status() -> List[str]:
+    instance = payload.get("instance")
+    return ["status"] + status_args(str(instance) if instance else None)
 
-  handlers: Dict[str, Callable[[], Tuple[Callable[..., Any], List[str]]]] = {
+  handlers: Dict[str, Callable[[], List[str]]] = {
     "up": run_up,
     "create": run_create,
     "down": run_down,
@@ -214,24 +230,31 @@ def action_runner(payload: Dict[str, Any], workdir: Path) -> Tuple[Callable[...,
     raise ValueError(f"unknown action {action}") from exc
 
 
-def run_netlab_action(payload: Dict[str, Any], log_fp: io.TextIOBase) -> None:
+"""
+run_netlab_action: run the requested netlab command in the job workdir
+
+The command runs as a subprocess because the working directory belongs to the job, not to
+the server: chdir would move every other thread of this process as well. The subprocess
+also writes straight into the job log, capturing the output of the programs netlab starts
+(Ansible, Vagrant, containerlab) that an in-process stdout redirect cannot see.
+
+The subprocess gets no standard input: a command asking for a password (sudo, Ansible)
+must fail instead of waiting forever while the job holds the run lock.
+"""
+def run_netlab_action(payload: Dict[str, Any], log_fp: IO[str]) -> None:
   workdir = workspace_dir(payload)
+  command = netlab_command(action_command(payload, workdir))
 
-  def _run_with_output(fn: Callable[..., Any], args: List[str]) -> None:
-    out = io.StringIO()
-    try:
-      with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-        fn(args)
-    finally:                                                # Keep the output of an action that ended with a fatal error
-      log_fp.write(out.getvalue())
-
-  prev_cwd = os.getcwd()
-  try:
-    os.chdir(workdir)
-    fn, args = action_runner(payload, workdir)
-    _run_with_output(fn, args)
-  finally:
-    os.chdir(prev_cwd)
+  log_fp.write(f"# {shlex.join(command)} (in {workdir})\n")
+  log_fp.flush()                                            # The child appends to the same file
+  result = subprocess.run(
+    command, cwd=workdir, stdin=subprocess.DEVNULL,
+    stdout=log_fp, stderr=subprocess.STDOUT, text=True)
+  if result.returncode < 0:                                 # A negative code is a killing signal
+    signame = signal.Signals(-result.returncode).name
+    raise RuntimeError(f"{shlex.join(command)} killed by {signame}")
+  if result.returncode:
+    raise RuntimeError(f"{shlex.join(command)} failed with exit code {result.returncode}")
 
 
 """
@@ -250,6 +273,34 @@ def exit_reason(exc: BaseException) -> Optional[str]:
     return None
 
   return f"netlab exited with code {code}" if isinstance(code, int) else str(code)
+
+
+"""
+lab_status: run 'netlab status' as a subprocess and return the HTTP status and the reply
+
+netlab status changes the working directory to the lab directory, which would move the
+whole server process (and with it any job thread running in another lab), so it may not be
+called in-process. A netlab error becomes a 404, as it did when status exited in-process.
+"""
+def lab_status(instance: Optional[str], o_format: str) -> Tuple[HTTPStatus, Any]:
+  args = ["status"]
+  if o_format != "text":
+    args += ["--format", "json"]
+  args += status_args(instance)
+
+  result = subprocess.run(netlab_command(args), capture_output=True, text=True)
+  if result.returncode:
+    return HTTPStatus.NOT_FOUND, {"status": result.stdout + result.stderr}
+
+  try:
+    reply = json.loads(result.stdout)
+  except json.JSONDecodeError:
+    return HTTPStatus.OK, {"status": result.stdout}
+
+  if isinstance(reply, dict) and "error" in reply:          # Unknown instance: an error document
+    return HTTPStatus.NOT_FOUND, reply
+
+  return HTTPStatus.OK, reply
 
 
 def job_public(job: Dict[str, Any]) -> Dict[str, Any]:
@@ -361,8 +412,6 @@ class NetlabHandler(BaseHTTPRequestHandler):
       send_json(self, HTTPStatus.OK, {"templates": list_templates(template_dir)})
 
     def get_status(*parts: Any) -> None:
-      out = io.StringIO()
-      args = []
       query = urllib.parse.parse_qs(parsed.query)
       o_format_qs = query.get("output")
       if not o_format_qs:
@@ -370,27 +419,9 @@ class NetlabHandler(BaseHTTPRequestHandler):
       else:
         o_format = o_format_qs[0]
 
-      if o_format != "text":
-        args += ['--format','json']
-
-      if parts:
-        args += ['--instance', parts[0]]
-      else:
-        args += ['--all']
-
       try:
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-          netlab_status.run(args)
-        status_code = HTTPStatus.OK
-      except SystemExit:
-        status_code = HTTPStatus.NOT_FOUND
-
-      status = out.getvalue()
-      try:
-        j_status = json.loads(status)
-        send_json(self, status_code, j_status)
-      except json.JSONDecodeError:
-        send_json(self, status_code, {"status": status})
+        status_code, reply = lab_status(parts[0] if parts else None, o_format)
+        send_json(self, status_code, reply)
       except Exception as ex:
         send_error(self, HTTPStatus.INTERNAL_SERVER_ERROR, str(ex))
 
@@ -432,16 +463,12 @@ class NetlabHandler(BaseHTTPRequestHandler):
     }
 
     key = parts.pop(0)
-    try:
-      log.init_log_system(header=False)
-      if key in simple_handlers and not parts:
-        return simple_handlers[key]()
-      elif key in path_handlers:
-        return path_handlers[key](*parts)
-      else:
-        return self._not_found()
-    except SystemExit:
-      return send_json(self, HTTPStatus.NOT_FOUND,{"error": log._ERROR_LOG})
+    if key in simple_handlers and not parts:
+      return simple_handlers[key]()
+    elif key in path_handlers:
+      return path_handlers[key](*parts)
+    else:
+      return self._not_found()
 
   def do_POST(self) -> None:
     if not require_auth(self):

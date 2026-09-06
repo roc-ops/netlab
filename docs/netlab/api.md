@@ -39,7 +39,9 @@ You can use the `?output=text` query string or set the `NETLAB_API_STATUS_OUTPUT
 - `collect`
 - `status`
 
-The API uses the same Python CLI modules as `netlab`, so its behavior and output are consistent with the CLI commands.
+Jobs and status requests execute the **netlab** CLI as subprocesses in the working directory of the job, so their behavior and output are identical to the CLI commands.
+
+The job log contains the whole output of the CLI command, including the output of the programs *netlab* starts (Ansible, Vagrant, or containerlab). When an action fails, the `error` field of the job is `<command> failed with exit code N` (or `<command> killed by SIGKILL` when the command was killed by a signal); the details are in the job log.
 
 ## Authentication
 
