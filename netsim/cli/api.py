@@ -219,9 +219,11 @@ def run_netlab_action(payload: Dict[str, Any], log_fp: io.TextIOBase) -> None:
 
   def _run_with_output(fn: Callable[..., Any], args: List[str]) -> None:
     out = io.StringIO()
-    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-      fn(args)
-    log_fp.write(out.getvalue())
+    try:
+      with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        fn(args)
+    finally:                                                # Keep the output of an action that ended with a fatal error
+      log_fp.write(out.getvalue())
 
   prev_cwd = os.getcwd()
   try:
@@ -230,6 +232,24 @@ def run_netlab_action(payload: Dict[str, Any], log_fp: io.TextIOBase) -> None:
     _run_with_output(fn, args)
   finally:
     os.chdir(prev_cwd)
+
+
+"""
+exit_reason: the error message for an exception that ended a job, None if it did not fail
+
+netlab reports fatal errors with log.fatal or error_and_exit, both of which call sys.exit,
+so a failing action raises SystemExit carrying an exit code or a message instead of an
+error. sys.exit() and sys.exit(0) are how a command reports success.
+"""
+def exit_reason(exc: BaseException) -> Optional[str]:
+  if not isinstance(exc, SystemExit):
+    return f"{exc}"
+
+  code = exc.code
+  if code is None or code == 0:
+    return None
+
+  return f"netlab exited with code {code}" if isinstance(code, int) else str(code)
 
 
 def job_public(job: Dict[str, Any]) -> Dict[str, Any]:
@@ -264,14 +284,19 @@ def start_job(payload: Dict[str, Any]) -> Dict[str, Any]:
         with open(log_path, "w", encoding="utf-8") as log_fp:
           run_netlab_action(payload, log_fp)
       job["state"] = "success"
-    except Exception as exc:
-      job["state"] = "failed"
-      job["error"] = f"{exc}"
-      with open(log_path, "a", encoding="utf-8") as log_fp:
-        log_fp.write("\n")
-        log_fp.write(traceback.format_exc())
-    finally:
-      job["finishedAt"] = now_iso()
+    except (Exception, SystemExit) as exc:                  # netlab exits on a fatal error
+      reason = exit_reason(exc)
+      if reason is None:                                    # A clean exit: the action succeeded
+        job["state"] = "success"
+      else:
+        job["state"] = "failed"
+        job["error"] = reason
+        with open(log_path, "a", encoding="utf-8") as log_fp:
+          log_fp.write("\n")
+          log_fp.write(traceback.format_exc())
+
+    # Not set in a 'finally': a job that died with the server has not finished
+    job["finishedAt"] = now_iso()
 
   thread = threading.Thread(target=_runner, daemon=True)
   with JOB_LOCK:
