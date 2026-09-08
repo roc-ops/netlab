@@ -92,7 +92,7 @@ Assert that the expected per-module scripts **exist**, not merely that the comma
 
 [`render-check.sh`](render-check.sh) is that loop plus the things a loop cannot state: the
 create-vs-render split (a create failure is reported as one), the per-topology artifact table
-described above, cleanup of what each render produced, and a refusal to render into a directory
+described above, cleanup of everything git would notice a render produced, and a refusal to render into a directory
 where a lab is running. It renders 31 topologies in about 80 seconds on netlab-server, and is
 safe to run repeatedly in the same tree -- see the idempotency property below. It is what
 [`t-render.yml`](../../../.github/workflows/t-render.yml) runs on every push.
@@ -255,11 +255,14 @@ the number. "IPv4 5/5, IPv6 4/4, 0% loss" survives review; "passes" does not.
 
 ## Still to do
 
-* **`validate:` blocks for `arcos/` and `ocnos/`.** Both suites were deploy-verified by hand on
-  2026-08-29 and their READMEs record what was measured, but neither is machine-checkable yet.
-  ArcOS needs its OpenConfig state paths (`show network-instance default protocol`) rather than
-  FRR-style `show` output; OcNOS needs the `ansible:` validation transport, because its `cmlsh`
-  restricted shell has no non-interactive exec mode and always exits 1 -- a non-zero exit there
-  is not evidence of failure.
+* **OSPFv3, `ospf_prefix` and a route-table action for `arcos`.** The suite is machine-checkable
+  as of 2026-09-08, but only for what `netsim/validate/*/arcos.py` implements: OSPFv2, BGP and
+  IS-IS. Ask a generic suite for an OSPFv3 or route-table check and netlab logs "no action for
+  test" and **skips the row** -- a skip is not a failure, so a run can look green having checked
+  nothing. Tracked as issue #124, which also carries the measurement a v3 path needs (the
+  obvious `protocol OSPF3 p1` path truncates the same way the v2 one did).
+* **`ocnos/` is not on this list.** It cannot be machine-checked from this tier at all -- see the
+  note under the suite table -- and pretending otherwise by leaving it as an open task would
+  misrepresent a device property as an unfinished chore.
 * **Wiring these suites into netlab's shared per-module `tests/integration/<module>/` matrix**,
   so a device is exercised by the same tests as every other device rather than only by its own.

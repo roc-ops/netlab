@@ -161,8 +161,12 @@ def valid_isis_neighbor(
       level: str = '',
       area: str = '', *,
       vrf: str = 'default',
-      instance: str = ISIS_INSTANCE,
-      **kwargs: typing.Any) -> str:
+      instance: str = ISIS_INSTANCE) -> str:
+  # No **kwargs, deliberately, and isis/frr.py has none either: a swallowed keyword is a check
+  # that cannot fail. Measured on this very file before the argument was removed --
+  # `isis_neighbor('r2',levl='L1')` (note the typo) PASSED, reporting the adjacency up while
+  # checking no level at all. That is the defect this plugin was rewritten to remove, so it
+  # must not survive in the signature that reports success.
   _result = global_vars.get_result_dict('_result')
 
   alias = _hostname_aliases(_result)
@@ -266,8 +270,9 @@ def valid_isis_prefix(
       present: bool = True,
       cost: typing.Optional[int] = None, *,
       vrf: str = 'default',
-      instance: str = ISIS_INSTANCE,
-      **kwargs: typing.Any) -> str:
+      instance: str = ISIS_INSTANCE) -> str:
+  # See valid_isis_neighbor: no **kwargs, so a mistyped keyword is a TypeError rather than a
+  # silent pass. `isis_prefix('10.0.0.2/32',cst=99)` passed while checking no cost at all.
   _result = global_vars.get_result_dict('_result')
   pfx = _rp_utils.get_prefix(pfx)
 

@@ -21,7 +21,11 @@
 # to be loaded for the id to mean anything; `-s multilab.id=51` on its own is not merely
 # inert here, it is a hard error (Invalid topology attribute multilab). With the plugin
 # loaded, as below, override it with:
-#   netlab up tests/integration/platform/arcos/arcos-2node.yml -s defaults.multilab.id=51
+#   cd tests/integration/platform/arcos && netlab up arcos-2node.yml -s defaults.multilab.id=51
+#
+# Run it from THIS directory. `defaults.sources.extra: [ ../../wait_times.yml ]` below resolves
+# relative to the working directory, and a defaults file netlab cannot find is read as None
+# without a word (netsim/utils/read.py) -- the validation constants then simply never load.
 provider: clab
 plugin: [ multilab ]
 module: [ ospf, bgp ]

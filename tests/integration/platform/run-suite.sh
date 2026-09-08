@@ -60,7 +60,7 @@ for t in "${TOPOS[@]}"; do
   # device is broken when the truth is that this tier produced no evidence about it at all,
   # and reporting it as PASS would be a lie. It gets its own outcome, and the run still exits
   # non-zero, because a suite that cannot be judged has not done the job it exists to do.
-  if [ $rc -ne 0 ] && grep -q 'No validation tests defined' "$LOGDIR/validate-$t.log"; then
+  if [ $rc -ne 0 ] && grep -q '^Fatal error in netlab: No validation tests defined' "$LOGDIR/validate-$t.log"; then
     echo "=== $t  NO TESTS   deployed, but this topology has no validate: block"
     notests=$((notests+1))
     continue

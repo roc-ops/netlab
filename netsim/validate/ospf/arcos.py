@@ -11,8 +11,11 @@ import typing
 
 from netsim.data import global_vars
 
-# netlab renders a single default-VRF OSPFv2 instance named p1, exactly as the BGP and IS-IS
-# plugins assume for theirs (BGP_INSTANCE, ISIS_INSTANCE). Asking for the instance rather than
+# netlab renders the default-VRF OSPFv2 instance as p<ospf.process> (ospf/arcos.j2), which is p1
+# unless a topology sets ospf.process -- as the BGP and IS-IS plugins assume for theirs
+# (BGP_INSTANCE, ISIS_INSTANCE). A topology that changes it must pass instance= here; the show
+# path would otherwise name an instance that does not exist and confd's parse-retry would spend
+# a minute failing. Loud, not silent, but not obvious from the failure text. Asking for the instance rather than
 # the whole network-instance is not tidiness: `show network-instance default | display json`
 # on arcos:8.2.1A.P2 returns 228507 bytes and confd truncates it mid-object at 228467, every
 # time (measured three consecutive runs, 2026-09-08) -- so netlab_show_command's parse-retry
