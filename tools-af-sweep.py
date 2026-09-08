@@ -347,7 +347,10 @@ def main():
       print(f"  {name:16} OK")
   tail = f"  findings={total}"
   if n_skip:
-    tail += f"  (skipped={n_skip}, harness could not express those cases)"
+    # Two different limits reach this counter -- a case the harness could not render at all, and
+    # a case that rendered but whose interface map was unreadable so shape 4 did not run. The
+    # per-case line says which; a summary that names only the first misdescribes the second.
+    tail += f"  (skipped={n_skip}, see the per-case reason above)"
   print(f"\n  device={DEVICE} modules={','.join(MODULES)}{tail}")
   return 1 if total else 0
 
