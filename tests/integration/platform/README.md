@@ -77,16 +77,13 @@ Assert that the expected per-module scripts **exist**, not merely that the comma
 `s1.bgp-maxprefix.sh`. A template that silently renders nothing exits 0.
 
 ```bash
-# Runs from a checkout of the fork. Tested verbatim: 31/31 topologies, well under a minute,
-# and run three times in a row in the same tree to prove the property below.
-fail=0
-for f in $(git ls-files ':(glob)tests/integration/platform/*/*.yml'); do
-  d=$(dirname "$f"); b=$(basename "$f")
-  ( cd "$d" && netlab create "$b" >/dev/null && netlab initial -o config --clean >/dev/null ) \
-    || { echo "RENDER FAILED: $f"; fail=1; }
-done
-exit $fail
+./render-check.sh
 ```
+
+[`render-check.sh`](render-check.sh) is this loop, verbatim: run from a checkout of the fork,
+it renders all 31 topologies in well under a minute, and is safe to run repeatedly in the same
+tree -- see the idempotency property below. It is what [`t-render.yml`](../../../.github/workflows/t-render.yml)
+runs on every push.
 
 **The loop is driven by `git ls-files`, and that is load-bearing, not a style choice.**
 `netlab create` writes `clab.yml` and `hosts.yml` *beside* each topology, and those match a
@@ -176,7 +173,9 @@ learned by getting them wrong first:
 
 ## Cadence and triggers
 
-**Tier 1.5: on every push, in CI.** It needs nothing but the repo.
+**Tier 1.5: on every push, in CI.** It needs nothing but the repo. Wired up as
+[`.github/workflows/t-render.yml`](../../../.github/workflows/t-render.yml), running
+[`render-check.sh`](render-check.sh).
 
 **Tier 2, whenever any of these happen -- these are triggers, not a schedule:**
 
