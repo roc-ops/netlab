@@ -41,10 +41,17 @@ nodes:
 links:
 - r1-r2
 
-# Every claim the header comment makes, as a machine check. Written after measuring each one on
-# a live lab (ml-95, 2026-09-08) -- not transcribed from the prose above, which is the failure
-# mode #87 exists to prevent. Read from r1 only: this is a two-node lab and both ends are the
-# same device, so r1's view of r2 is the whole adjacency.
+# Written after measuring each one on a live lab (ml-95, 2026-09-08) -- not transcribed from the
+# prose above, which is the failure mode #87 exists to prevent. Read from r1 only: this is a
+# two-node lab and both ends are the same device, so r1's view of r2 is the whole adjacency.
+#
+# NOT every claim the header makes. The header also records an OSPFv3 adjacency, and there is no
+# machine check for it here: netlab ships no `ospf6_*` action for arcos
+# (netsim/validate/ospf/arcos.py implements the v2 neighbour check only), so a v3 row would have
+# to be hand-rolled `show:` + Jinja against a JSON tree nobody has measured. The OSPFv3 line
+# above therefore remains a HUMAN claim from the 2026-08-29 run, and is exactly the kind of claim
+# this suite exists to stop trusting -- tracked as a follow-up, not quietly deleted and not
+# quietly promoted.
 validate:
   ospf_adj:
     description: OSPFv2 adjacency with r2 reaches FULL
