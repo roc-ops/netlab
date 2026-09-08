@@ -89,7 +89,6 @@ CASES = [
 OPENER   = re.compile(r"^(\s*)(instance \S+"
                       r"|area \S+"
                       r"|network-instance \S+ protocol \S+ \S+"
-                      r"|router ospfv?3? ?\S*"
                       r"|ospfv?3|ospf6|isis|bgp)\s*$")
 METADATA = re.compile(r"^\s*(router-id|administrative-distance|log-adjacency|global |area |!|$)")
 
@@ -102,10 +101,10 @@ METADATA = re.compile(r"^\s*(router-id|administrative-distance|log-adjacency|glo
 # called on anything else, so an entry for a construct OPENER cannot enter (an `address-family
 # ipv6` line, say) reads as coverage the tool does not have.
 AF_OPENER = [
-  (re.compile(r"(?i)^(ospf ?v?3|ospf6)$"),          "ipv6"),   # DNOS bare container word
-  (re.compile(r"(?i)^router\s+ospf ?v?3\b"),        "ipv6"),
-  (re.compile(r"(?i)^ospf$"),                       "ipv4"),   # ... and its v4 sibling
-  (re.compile(r"(?i)^router\s+ospf\b(?!\s*v?3)"),   "ipv4"),
+  (re.compile(r"(?i)^(ospf ?v?3|ospf6)$"),          "ipv6"),   # DNOS bare container word. Its
+                                                               # v4 sibling is "instance ospf",
+                                                               # matched below -- DNOS renders no
+                                                               # bare "ospf" line to match here.
   (re.compile(r"(?i)\b(ospf ?v?3|ospf6)\b"),        "ipv6"),   # ArcOS OSPF3 / "instance ospfv3"
   (re.compile(r"(?i)\bprotocol\s+OSPF\s"),         "ipv4"),   # ArcOS "protocol OSPF p1"
   (re.compile(r"(?i)\binstance\s+ospf\b(?!v?3)"),  "ipv4"),
@@ -252,7 +251,7 @@ def empty_blocks(cfg):
 
 
 def one_case(name, lo_af, link_af, split=False):
-  notes = []
+  notes, limits = [], []
   tmp = tempfile.mkdtemp(prefix="afs.")
   try:
     cfgs, lb, if_afs = render(name, lo_af, link_af, tmp, split)
@@ -266,9 +265,10 @@ def one_case(name, lo_af, link_af, split=False):
       return [], [f"cannot express this case: {lb[0][:70]}"]
 
     # An empty interface map disables shape 4 completely, and silence would then mean both
-    # "nothing wrong" and "not checked". Say which.
-    if not if_afs:
-      notes.append("shape 4 not run: no interface map for n1")
+    # "nothing wrong" and "not checked". Say which -- as a LIMIT, not a finding: counting it
+    # would report a red run for a check that never executed, which is the same cry-wolf the
+    # skipped-case machinery exists to avoid.
+    limits = [] if if_afs else ["shape 4 not run: no interface map for n1"]
     for mod, cfg in cfgs.items():
       for blk in empty_blocks(cfg):
         notes.append(f"{mod}: EMPTY <{blk}>")
@@ -329,7 +329,7 @@ def one_case(name, lo_af, link_af, split=False):
         os.chdir("/"); shutil.rmtree(tmp2, ignore_errors=True)
   finally:
     os.chdir("/"); shutil.rmtree(tmp, ignore_errors=True)
-  return notes, []
+  return notes, limits
 
 
 def main():
