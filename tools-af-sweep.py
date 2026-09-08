@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Address-family sweep for netlab device templates.
 
-Checks three shapes:
+Checks four shapes:
 
   1. EMPTY  -- a per-AF construct emitted with no members (a stranded "instance ospfv3").
   2. ABSENT -- a family the node has that the module does not render at all.
@@ -20,6 +20,11 @@ If varying a family does not change what the module renders, the module is ignor
 No device vocabulary is involved, so shape 2 is correct for any device. Shape 1 is not -- its
 opener patterns are per-CLI and have to be extended for each device's instance syntax.
 
+Shape 4 reaches only a CLI whose per-AF construct matches OPENER above and whose opener names a
+family -- ArcOS and DNOS today. On a device whose OSPF config never spells a family into a
+construct header, it silently checks nothing, so a clean run there is not evidence. That is the
+same per-CLI limit shape 1 carries, stated here because a silent zero is easy to misread.
+
 Shape 4 is the one shape that needs a node whose INTERFACES disagree with each other, which is
 why the split cases exist. The defect it hunts is a filter keyed on the wrong family --
 `if l.ipv4 is defined` inside the loop that builds the IPv6 area -- and on a uniform dual-stack
@@ -35,11 +40,6 @@ a policy attached to one family and not the other. Both templates in this tree c
 about exactly such defects stalling an adjacency in ExStart. Detecting those means encoding what
 correct content looks like per device and per module, which is how a hardcoded CLI vocabulary
 crept into this file three times; it belongs in integration tests against real hardware.
-
-That limit is on purpose. Detecting wrong content means encoding what correct content looks like
-per device and per module, which is how a hardcoded CLI vocabulary crept into this file three
-times and made it wrong for every device except the one in front of me. Content correctness
-belongs in integration tests against real hardware, not here.
 
 Usage: af_sweep.py <device> [module ...]
 """
@@ -80,9 +80,17 @@ CASES = [
 # Constructs where an empty body is a defect. "network-instance <ni> protocol <proto> <inst>"
 # is ArcOS's instance line -- five tokens. A pattern anchored after the first token never matched
 # it, so this check silently did nothing on ArcOS while looking like it covered it.
+# A construct opener. Per-CLI, as shape 1's docstring says. The bare-word alternative is what
+# reaches DNOS: its OSPFv3 process is the single word "ospfv3" nested under "protocols", so with
+# only the multi-token patterns here nothing opened a frame, the "area 0.0.0.0" beneath it had no
+# parent to inherit a family from, and shape 4 skipped every member -- silently, on the very
+# device whose defect motivated issue #73. Restricted to the protocol container words we render,
+# not any bare word: "interface swp1" must stay a MEMBER, never an opener.
 OPENER   = re.compile(r"^(\s*)(instance \S+"
                       r"|area \S+"
-                      r"|network-instance \S+ protocol \S+ \S+)\s*$")
+                      r"|network-instance \S+ protocol \S+ \S+"
+                      r"|router ospfv?3? ?\S*"
+                      r"|ospfv?3|ospf6|isis|bgp)\s*$")
 METADATA = re.compile(r"^\s*(router-id|administrative-distance|log-adjacency|global |area |!|$)")
 
 # Which family a construct's opener declares, for shape 4. Per-CLI by nature, exactly as the
@@ -90,11 +98,17 @@ METADATA = re.compile(r"^\s*(router-id|administrative-distance|log-adjacency|glo
 # with no 3 in it is the v4 one. A construct whose opener says nothing about a family (a bare
 # "area 0") inherits the family of the construct it sits inside, so it is resolved by nesting
 # rather than guessed at here.
+# Only patterns that can match a line OPENER already matched belong here -- opener_af() is never
+# called on anything else, so an entry for a construct OPENER cannot enter (an `address-family
+# ipv6` line, say) reads as coverage the tool does not have.
 AF_OPENER = [
-  (re.compile(r"(?i)\b(ospf ?v?3|ospf6|ipv6[-_ ]unicast|address-family\s+ipv6)\b"), "ipv6"),
-  (re.compile(r"(?i)\b(ospf ?v?2|ipv4[-_ ]unicast|address-family\s+ipv4)\b"),      "ipv4"),
-  (re.compile(r"(?i)\bprotocol\s+OSPF\s"),                                          "ipv4"),
-  (re.compile(r"(?i)\binstance\s+ospf\b(?!v?3)"),                                   "ipv4"),
+  (re.compile(r"(?i)^(ospf ?v?3|ospf6)$"),          "ipv6"),   # DNOS bare container word
+  (re.compile(r"(?i)^router\s+ospf ?v?3\b"),        "ipv6"),
+  (re.compile(r"(?i)^ospf$"),                       "ipv4"),   # ... and its v4 sibling
+  (re.compile(r"(?i)^router\s+ospf\b(?!\s*v?3)"),   "ipv4"),
+  (re.compile(r"(?i)\b(ospf ?v?3|ospf6)\b"),        "ipv6"),   # ArcOS OSPF3 / "instance ospfv3"
+  (re.compile(r"(?i)\bprotocol\s+OSPF\s"),         "ipv4"),   # ArcOS "protocol OSPF p1"
+  (re.compile(r"(?i)\binstance\s+ospf\b(?!v?3)"),  "ipv4"),
 ]
 MEMBER_IF = re.compile(r"^\s*interface\s+(\S+)\s*$")
 
@@ -152,7 +166,14 @@ SPLIT_LINKS = [("n2","ipv4"), ("n3","ipv6")]
 
 
 def render(name, lo_af, link_af, tmp, split=False, split_links=None):
-  """Render one case. Returns ({module: config}, loopback_ifname) or (None, error)."""
+  """Render one case.
+
+  Returns ({module: config}, loopback_ifname, {ifname: {families}}) or (None, error, {}) --
+  three elements on BOTH paths. The failure path returned two for a while and every caller
+  unpacked three, so `tools-af-sweep.py frr stp` died with a ValueError instead of printing the
+  SKIPPED line it was designed to print, and shape 2's `if cfgs2 is None: continue` guard took
+  the whole run down with it rather than skipping one comparison.
+  """
   os.chdir(tmp)
   with open("t.yml","w") as f:
     f.write(f"provider: external\ndefaults.device: {DEVICE}\n")
@@ -185,7 +206,7 @@ def render(name, lo_af, link_af, tmp, split=False, split_links=None):
     if af not in lo_af:   ov += ["-s", f"addressing.loopback.{af}=False"]
   r = subprocess.run(["netlab","create","t.yml"]+ov, capture_output=True, text=True)
   if r.returncode:
-    return None, (r.stdout+r.stderr).strip().splitlines()[:2]
+    return None, (r.stdout+r.stderr).strip().splitlines()[:2], {}
   cfgs = {}
   for m in ["initial"] + MODULES:      # initial is rendered unconditionally, not a module: value
     p = f"node_files/n1/{m}"
@@ -244,6 +265,10 @@ def one_case(name, lo_af, link_af, split=False):
       # says nothing about template correctness. They are surfaced separately and not counted.
       return [], [f"cannot express this case: {lb[0][:70]}"]
 
+    # An empty interface map disables shape 4 completely, and silence would then mean both
+    # "nothing wrong" and "not checked". Say which.
+    if not if_afs:
+      notes.append("shape 4 not run: no interface map for n1")
     for mod, cfg in cfgs.items():
       for blk in empty_blocks(cfg):
         notes.append(f"{mod}: EMPTY <{blk}>")
