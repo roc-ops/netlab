@@ -8,7 +8,9 @@ on:
     - '**.yml'
     - '**.j2'
     - 'tests/integration/platform/render-check.sh'
-    - '.github/workflows/t-render.yml'
+    # A dependency bump changes what netlab IS, and this is the one job that runs it.
+    - 'requirements.txt'
+    - 'netlab'
 
 jobs:
   render:

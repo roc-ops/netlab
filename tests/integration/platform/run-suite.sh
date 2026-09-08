@@ -43,7 +43,7 @@ else
 fi
 
 cd "$DIR" || exit 2
-pass=0; fail=0; warn=0
+pass=0; fail=0; warn=0; notests=0
 for t in "${TOPOS[@]}"; do
   stamp=$(date +%Y%m%d-%H%M%S)
   netlab down --cleanup >/dev/null 2>&1
@@ -55,6 +55,16 @@ for t in "${TOPOS[@]}"; do
   fi
   netlab validate > "$LOGDIR/validate-$t.log" 2>&1
   rc=$?
+  # A topology with no `validate:` block is not a failing device -- netlab exits non-zero
+  # saying "No validation tests defined for the current lab". Reporting that as FAIL says the
+  # device is broken when the truth is that this tier produced no evidence about it at all,
+  # and reporting it as PASS would be a lie. It gets its own outcome, and the run still exits
+  # non-zero, because a suite that cannot be judged has not done the job it exists to do.
+  if [ $rc -ne 0 ] && grep -q 'No validation tests defined' "$LOGDIR/validate-$t.log"; then
+    echo "=== $t  NO TESTS   deployed, but this topology has no validate: block"
+    notests=$((notests+1))
+    continue
+  fi
   case $rc in
     0) echo "=== $t  PASS   $(grep -oE 'Tests passed: [0-9]+' "$LOGDIR/validate-$t.log" | tail -1)"
        pass=$((pass+1)) ;;
@@ -72,5 +82,8 @@ done
 netlab down --cleanup >/dev/null 2>&1
 
 echo
-echo "pass=$pass warn=$warn fail=$fail   logs: $LOGDIR"
-[ "$fail" -eq 0 ]
+echo "pass=$pass warn=$warn fail=$fail notests=$notests   logs: $LOGDIR"
+if [ "$notests" -gt 0 ]; then
+  echo "$notests topology(ies) deployed but asserted nothing -- no evidence, not a pass."
+fi
+[ "$fail" -eq 0 ] && [ "$notests" -eq 0 ]

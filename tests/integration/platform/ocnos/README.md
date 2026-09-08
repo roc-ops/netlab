@@ -17,6 +17,17 @@ export ANSIBLE_COLLECTIONS_PATH=~/.ansible/collections:$(python -c "import netsi
 netlab up tests/integration/platform/ocnos/ospf-bgp.yml
 ```
 
+## Status: re-run live 2026-09-08 (issue #87)
+
+Deployed clean on the current fork head. The `netsim/extra/ntp/ocnos.j2` change that landed four
+minutes after the 2026-08-29 run was the trigger for this one, and it changed nothing here.
+
+`run-suite.sh` reports this suite as **NO TESTS**: it deploys, and it asserts nothing, because
+this device cannot be asserted against from netlab's device-side `show` path (below). The runner
+counts that separately from a pass and separately from a failure, and exits non-zero either way
+-- the honest reading is "no evidence", and the evidence for OcNOS lives in the generic module
+suites instead.
+
 ## Status: re-run live 2026-08-29 (issue #87)
 
 Three separate claims, as everywhere in `tests/integration/platform/` -- does it CREATE, does
