@@ -6,6 +6,7 @@ Checks three shapes:
   1. EMPTY  -- a per-AF construct emitted with no members (a stranded "instance ospfv3").
   2. ABSENT -- a family the node has that the module does not render at all.
   3. LEAK   -- a device-owned loopback rendered on a node netlab does not own.
+  4. MISMATCH -- a member listed under a per-AF construct that does not have that family.
 
 Design note, after three rewrites that each hardcoded whatever CLI happened to be in front of
 me. Shape 2 used to be a token match (`ipv4-unicast`, `instance ospf`, ...), which was wrong
@@ -19,11 +20,21 @@ If varying a family does not change what the module renders, the module is ignor
 No device vocabulary is involved, so shape 2 is correct for any device. Shape 1 is not -- its
 opener patterns are per-CLI and have to be extended for each device's instance syntax.
 
-WHAT THIS SWEEP DOES NOT DETECT, deliberately. Shape 2 finds a family that is ABSENT, never one
-that is WRONG. A family rendered with the wrong content -- a network type set for IPv4 only, an
-MTU short by a header, a policy attached to one family and not the other -- changes the output
-when the family is varied, so the differential is satisfied and says nothing. Both templates in
-this tree carry comments about exactly such defects stalling an adjacency in ExStart.
+Shape 4 is the one shape that needs a node whose INTERFACES disagree with each other, which is
+why the split cases exist. The defect it hunts is a filter keyed on the wrong family --
+`if l.ipv4 is defined` inside the loop that builds the IPv6 area -- and on a uniform dual-stack
+node it is invisible, because there every interface has both families and the wrong filter
+selects exactly the right set. Give the node one v4-only and one v6-only interface and the v6
+construct comes back listing the v4 interface. Shapes 1-3 all pass on that: the construct is not
+empty, the family is not absent, and no loopback leaked. Measured on this tree.
+
+WHAT THIS SWEEP STILL DOES NOT DETECT, deliberately. Shapes 2 and 4 find a family that is ABSENT
+or a member that is in the WRONG construct. Neither finds a member that is present, correctly
+placed, and carries wrong SETTINGS -- a network type set for IPv4 only, an MTU short by a header,
+a policy attached to one family and not the other. Both templates in this tree carry comments
+about exactly such defects stalling an adjacency in ExStart. Detecting those means encoding what
+correct content looks like per device and per module, which is how a hardcoded CLI vocabulary
+crept into this file three times; it belongs in integration tests against real hardware.
 
 That limit is on purpose. Detecting wrong content means encoding what correct content looks like
 per device and per module, which is how a hardcoded CLI vocabulary crept into this file three
@@ -42,16 +53,26 @@ import tempfile
 DEVICE  = sys.argv[1] if len(sys.argv) > 1 else "dnos"
 MODULES = sys.argv[2:] or ["ospf"]
 
-# (name, loopback AFs, link AFs). The mixed and phys cases are the shapes physical hardware
-# produces once the device owns its loopback; uniform-AF sweeps never generate them.
+# (name, loopback AFs, link AFs, split). The mixed and phys cases are the shapes physical
+# hardware produces once the device owns its loopback; uniform-AF sweeps never generate them.
+#
+# `split` is the last shape issue #73 asked for and the only one the rest of this table cannot
+# express: the AF profile varies BETWEEN two interfaces of the same node, not just between the
+# node's link and its loopback. Every other case here sets the families with a global
+# `addressing.p2p.<af>=False`, which by construction gives every link the same profile -- so a
+# construct that is correct per-node while being wrong per-interface (an area holding only the
+# v4 half of a dual-stack node's interfaces, say) renders identically in all seven and is
+# invisible. The split case writes its links explicitly instead, one family each.
 CASES = [
-  ("v4only",        ["ipv4"],         ["ipv4"]),
-  ("dualstack",     ["ipv4","ipv6"],  ["ipv4","ipv6"]),
-  ("v6only",        ["ipv6"],         ["ipv6"]),
-  ("lo-v6/link-v4", ["ipv6"],         ["ipv4"]),
-  ("lo-v4/link-v6", ["ipv4"],         ["ipv6"]),
-  ("phys/link-v4",  ["ipv4","ipv6"],  ["ipv4"]),
-  ("phys/link-v6",  ["ipv4","ipv6"],  ["ipv6"]),
+  ("v4only",        ["ipv4"],         ["ipv4"],         False),
+  ("dualstack",     ["ipv4","ipv6"],  ["ipv4","ipv6"],  False),
+  ("v6only",        ["ipv6"],         ["ipv6"],         False),
+  ("lo-v6/link-v4", ["ipv6"],         ["ipv4"],         False),
+  ("lo-v4/link-v6", ["ipv4"],         ["ipv6"],         False),
+  ("phys/link-v4",  ["ipv4","ipv6"],  ["ipv4"],         False),
+  ("phys/link-v6",  ["ipv4","ipv6"],  ["ipv6"],         False),
+  ("split-links",   ["ipv4","ipv6"],  ["ipv4","ipv6"],  True),
+  ("split-phys",    ["ipv4","ipv6"],  ["ipv4","ipv6"],  True),
 ]
 
 # Constructs where an empty body is a defect. A BGP "address-family" with an empty body is NOT
@@ -64,8 +85,73 @@ OPENER   = re.compile(r"^(\s*)(instance \S+"
                       r"|network-instance \S+ protocol \S+ \S+)\s*$")
 METADATA = re.compile(r"^\s*(router-id|administrative-distance|log-adjacency|global |area |!|$)")
 
+# Which family a construct's opener declares, for shape 4. Per-CLI by nature, exactly as the
+# OPENER patterns above are: "ospfv3"/"OSPF3" is the v6 instance on DNOS/ArcOS, and an "OSPF p1"
+# with no 3 in it is the v4 one. A construct whose opener says nothing about a family (a bare
+# "area 0") inherits the family of the construct it sits inside, so it is resolved by nesting
+# rather than guessed at here.
+AF_OPENER = [
+  (re.compile(r"(?i)\b(ospf ?v?3|ospf6|ipv6[-_ ]unicast|address-family\s+ipv6)\b"), "ipv6"),
+  (re.compile(r"(?i)\b(ospf ?v?2|ipv4[-_ ]unicast|address-family\s+ipv4)\b"),      "ipv4"),
+  (re.compile(r"(?i)\bprotocol\s+OSPF\s"),                                          "ipv4"),
+  (re.compile(r"(?i)\binstance\s+ospf\b(?!v?3)"),                                   "ipv4"),
+]
+MEMBER_IF = re.compile(r"^\s*interface\s+(\S+)\s*$")
 
-def render(name, lo_af, link_af, tmp):
+
+def opener_af(text):
+  for rx, af in AF_OPENER:
+    if rx.search(text):
+      return af
+  return None
+
+
+def af_mismatches(cfg, if_afs):
+  """Shape 4: an `interface X` member under a construct of a family X does not have.
+
+  `if_afs` maps ifname -> set of families the node actually configured on it. An interface the
+  map does not know (a loopback the device owns, a name the provider renamed) is skipped rather
+  than reported: this shape exists to catch a wrong FILTER, and an unknown name is not evidence
+  of one.
+  """
+  bad, stack = [], []            # stack of (indent, af-or-None, opener text, af_declared_here)
+  for ln in cfg.splitlines():
+    if not ln.strip():
+      continue
+    indent = len(ln) - len(ln.lstrip())
+    while stack and indent <= stack[-1][0]:
+      stack.pop()
+    m = OPENER.match(ln)
+    if m:
+      text = m.group(2).strip()
+      own = opener_af(text)
+      af = own or (stack[-1][1] if stack else None)
+      stack.append((indent, af, text, own is not None))
+      continue
+    mi = MEMBER_IF.match(ln)
+    if not mi or not stack:
+      continue
+    af = stack[-1][1]
+    ifname = mi.group(1)
+    if af and ifname in if_afs and af not in if_afs[ifname]:
+      # Name the construct that DECLARED the family, not the innermost frame that inherited it:
+      # "listed under <network-instance default protocol OSPF3 p1>" points at the template branch
+      # to fix, where "<area 0>" leaves the reader to work out which family's area it was.
+      owner = next((t for _, _a, t, own in stack if own), stack[-1][2])
+      bad.append(f"{ifname} has no {af} but is listed under <{owner}>")
+  return bad
+
+
+# The split case's links, as (peer, family) pairs. The differential rewrites this rather than
+# touching the global addressing pools, because the split case pins its families in the topology
+# text where an `addressing.p2p.<af>=False` override cannot reach them -- vary the pools instead
+# and the "alt" render comes back byte-identical, which shape 2 then reports as "family not
+# rendered" on a template that renders it perfectly well. Measured: that false positive fired on
+# both arcos and dnos before this map existed.
+SPLIT_LINKS = [("n2","ipv4"), ("n3","ipv6")]
+
+
+def render(name, lo_af, link_af, tmp, split=False, split_links=None):
   """Render one case. Returns ({module: config}, loopback_ifname) or (None, error)."""
   os.chdir(tmp)
   with open("t.yml","w") as f:
@@ -73,12 +159,29 @@ def render(name, lo_af, link_af, tmp):
     f.write("module: [ " + ", ".join(MODULES) + " ]\n")
     if "bgp" in MODULES:
       f.write("bgp.as: 65000\n")
-    if name.startswith("phys"):
+    # "the device owns its loopback" is the physical case, and it is what makes a stranded
+    # per-AF construct reachable: with the loopback gone, a family whose only member is a link
+    # of the other family has nothing at all. split-phys is that shape AND per-interface
+    # divergence at once, which is what a real hardware adjacency looks like.
+    if "phys" in name:
       f.write("groups:\n  all:\n    vars:\n      netlab_manage_identity: False\n")
-    f.write("nodes: [ n1, n2 ]\nlinks: [ n1-n2 ]\n")
+    if split:
+      # Per-LINK families, which the global addressing overrides below cannot express: n1 ends
+      # up with one v4-only interface and one v6-only interface, in the same area, same module.
+      # Per-INTERFACE, not `prefix.<af>: False`: a prefix dict carrying only one family
+      # REPLACES the pool allocation, so the link loses the other family too and the node is
+      # back to uniform -- measured, swp1 came back with neither address.
+      pairs = split_links or SPLIT_LINKS
+      f.write("nodes: [ n1, " + ", ".join(p for p, _ in pairs) + " ]\n")
+      f.write("links:\n")
+      for peer, af in pairs:
+        off = "ipv6" if af == "ipv4" else "ipv4"
+        f.write(f"- n1: {{ {off}: False }}\n  {peer}: {{ {off}: False }}\n")
+    else:
+      f.write("nodes: [ n1, n2 ]\nlinks: [ n1-n2 ]\n")
   ov = []
   for af in ("ipv4","ipv6"):
-    if af not in link_af: ov += ["-s", f"addressing.p2p.{af}=False"]
+    if af not in link_af and not split: ov += ["-s", f"addressing.p2p.{af}=False"]
     if af not in lo_af:   ov += ["-s", f"addressing.loopback.{af}=False"]
   r = subprocess.run(["netlab","create","t.yml"]+ov, capture_output=True, text=True)
   if r.returncode:
@@ -90,7 +193,24 @@ def render(name, lo_af, link_af, tmp):
       cfgs[m] = open(p).read()
   lb = subprocess.run(["netlab","inspect","nodes.n1.loopback.ifname"],
                       capture_output=True, text=True).stdout.strip() or None
-  return cfgs, lb
+  return cfgs, lb, interface_afs()
+
+
+def interface_afs():
+  """{ifname: {families}} for n1, read from the transformed topology rather than guessed."""
+  raw = subprocess.run(["netlab","inspect","nodes.n1.interfaces"],
+                       capture_output=True, text=True).stdout
+  try:
+    import yaml
+    data = yaml.safe_load(raw) or []
+  except Exception:                                  # noqa: BLE001 -- a map we cannot read is no map
+    return {}
+  out = {}
+  for intf in data if isinstance(data, list) else []:
+    if not isinstance(intf, dict) or "ifname" not in intf:
+      continue
+    out[str(intf["ifname"])] = {af for af in ("ipv4","ipv6") if intf.get(af)}
+  return out
 
 
 def empty_blocks(cfg):
@@ -110,11 +230,12 @@ def empty_blocks(cfg):
   return bad
 
 
-def one_case(name, lo_af, link_af):
+def one_case(name, lo_af, link_af, split=False):
   notes = []
   tmp = tempfile.mkdtemp(prefix="afs.")
   try:
-    cfgs, lb = render(name, lo_af, link_af, tmp)
+    cfgs, lb, if_afs = render(name, lo_af, link_af, tmp, split)
+    base_links = list(SPLIT_LINKS)
     if cfgs is None:
       # NOT a template defect. The topology this harness generates is fixed (two nodes, one
       # link), so a module with requirements it cannot express -- stp needs vlan, vrf and evpn
@@ -126,11 +247,13 @@ def one_case(name, lo_af, link_af):
     for mod, cfg in cfgs.items():
       for blk in empty_blocks(cfg):
         notes.append(f"{mod}: EMPTY <{blk}>")
+      for bad in af_mismatches(cfg, if_afs):
+        notes.append(f"{mod}: MISMATCH {bad}")
 
     # Shape 3 -- a device that owns its loopback must not have it rendered. Keyed on the
     # loopback name netlab actually assigned, not a literal: DNOS is lo0 and ArcOS loopback0,
     # and a hardcoded "lo0" is silently blind on every device that names it otherwise.
-    if name.startswith("phys") and lb:
+    if "phys" in name and lb:
       for mod, cfg in cfgs.items():
         if re.search(rf"(?<![\w-]){re.escape(lb)}(?![\w-])", cfg):
           notes.append(f"{mod}: renders {lb} although the device owns its loopback")
@@ -161,9 +284,17 @@ def one_case(name, lo_af, link_af):
         verb = "adding"
       if not alt or not alt_lo:
         continue
+      # For the split case the families live per link, so vary THOSE: every link carrying the
+      # family under test switches to the other one, which is a real change to what n1 has.
+      alt_links = None
+      if split:
+        other = "ipv6" if af == "ipv4" else "ipv4"
+        alt_links = [(p, other if a == af else a) for p, a in base_links]
+        if alt_links == base_links:
+          continue
       tmp2 = tempfile.mkdtemp(prefix="afs2.")
       try:
-        cfgs2, _ = render(name, alt_lo, alt, tmp2)
+        cfgs2, _, _ = render(name, alt_lo, alt, tmp2, split, alt_links)
         if cfgs2 is None:
           continue
         for mod in MODULES:
@@ -178,8 +309,8 @@ def one_case(name, lo_af, link_af):
 
 def main():
   total = n_skip = 0
-  for name, lo_af, link_af in CASES:
-    found, skipped = one_case(name, lo_af, link_af)
+  for name, lo_af, link_af, split in CASES:
+    found, skipped = one_case(name, lo_af, link_af, split)
     notes = sorted(set(found))            # count what is printed, not pre-dedup
     total += len(notes)
     n_skip += len(skipped)
