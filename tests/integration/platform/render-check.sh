@@ -35,12 +35,15 @@ ROOT="$(cd "$HERE/../../.." && pwd)"                     # repo root
 NETLAB="$ROOT/netlab"
 [ -x "$NETLAB" ] || { echo "cannot find the netlab wrapper script at $NETLAB" >&2; exit 2; }
 
-# Untracked paths in the current directory, NUL-delimited on the git side: porcelain's plain
-# form quotes a path containing a space, so `awk '{print $2}'` truncates it at the space, and
-# the file it names is then never cleaned up -- which quietly breaks the idempotency this whole
-# check relies on. Paths come back relative to the repo root either way.
+# Untracked paths under $1, one per line, REPO-ROOT-RELATIVE because that is what cleanup
+# prefixes with $ROOT. Two traps live here, both of which this script has already fallen into:
+# porcelain's plain form quotes a path containing a space, so `awk '{print $2}'` truncates it
+# there and the file is never cleaned up; and `git ls-files -o` run from inside a directory
+# reports paths relative to THAT directory, not the root, so prefixing them with $ROOT names
+# something else entirely. Run from the root with the directory as a pathspec: one base, and
+# -z means no quoting.
 untracked_paths() {
-  git ls-files -o --exclude-standard -z -- . | tr '\0' '\n' | sort
+  git -C "$ROOT" ls-files -o --exclude-standard -z -- "$1" | tr '\0' '\n' | sort
 }
 
 # Required per-module artifacts, keyed by topology path (relative to the repo root) -> a path
@@ -101,7 +104,7 @@ for f in "${TOPOS[@]}"; do
     continue
   fi
 
-  before=$(cd "$d" && untracked_paths)
+  before=$(untracked_paths "$d")
 
   create_log=$(mktemp)
   init_log=$(mktemp)
@@ -130,13 +133,20 @@ for f in "${TOPOS[@]}"; do
   # container runtime creates clab-<id>/), so either one appearing here belongs to a
   # concurrent `netlab up` in the same directory, not to us, and deleting it would be the
   # exact kind of interference we were told not to cause.
-  after=$(cd "$d" && untracked_paths)
+  after=$(untracked_paths "$d")
   new=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))
   while IFS= read -r p; do
     [ -z "$p" ] && continue
     case "$(basename "$p")" in
       netlab.lock) continue ;;
       clab-*) continue ;;
+    esac
+    # Refuse anything that is not under the topology directory this iteration is rendering in.
+    # The paths come from git, but they have already been wrong once (see untracked_paths), and
+    # the operation is rm -rf: cheap insurance against the next base mix-up.
+    case "$p" in
+      "$d"/*) ;;
+      *) echo "refusing to remove $p: outside $d" >&2; continue ;;
     esac
     rm -rf -- "${ROOT:?}/${p:?}"
   done <<<"$new"
