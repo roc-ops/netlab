@@ -21,14 +21,22 @@
 # to be loaded for the id to mean anything; `-s multilab.id=51` on its own is not merely
 # inert here, it is a hard error (Invalid topology attribute multilab). With the plugin
 # loaded, as below, override it with:
-#   netlab up tests/integration/platform/arcos/arcos-2node.yml -s defaults.multilab.id=51
+#   cd tests/integration/platform/arcos && netlab up arcos-2node.yml -s defaults.multilab.id=51
+#
+# Run it from THIS directory. `defaults.sources.extra: [ ../../wait_times.yml ]` below resolves
+# relative to the working directory, and a defaults file netlab cannot find is read as None
+# without a word (netsim/utils/read.py) -- the validation constants then simply never load.
 provider: clab
 plugin: [ multilab ]
 module: [ ospf, bgp ]
-defaults:
-  device: arcos
-  multilab:
-    id: 51
+# The shared validation wait times, which already carry the ArcOS-specific ones this lab needs:
+# arcos.ibgp_session is 150s because ArcOS rejects every BGP FSM transition until its startup
+# config read completes. A numeric wait here would duplicate that number and then rot away from
+# it. Dotted keys throughout, as in the sibling ocnos suite: a `defaults:` mapping block beside
+# a `defaults.x:` key replaces it wholesale, and the constants vanish with no error.
+defaults.sources.extra: [ ../../wait_times.yml ]
+defaults.device: arcos
+defaults.multilab.id: 51
 nodes:
   r1:
     bgp.as: 65000
@@ -36,3 +44,37 @@ nodes:
     bgp.as: 65000
 links:
 - r1-r2
+
+# Written after measuring each one on a live lab (ml-95, 2026-09-08) -- not transcribed from the
+# prose above, which is the failure mode #87 exists to prevent. Read from r1 only: this is a
+# two-node lab and both ends are the same device, so r1's view of r2 is the whole adjacency.
+#
+# NOT every claim the header makes. The header also records an OSPFv3 adjacency, and there is no
+# machine check for it here: netlab ships no `ospf6_*` action for arcos
+# (netsim/validate/ospf/arcos.py implements the v2 neighbour check only), so a v3 row would have
+# to be hand-rolled `show:` + Jinja against a JSON tree nobody has measured. The OSPFv3 line
+# above therefore remains a HUMAN claim from the 2026-08-29 run, and is exactly the kind of claim
+# this suite exists to stop trusting -- tracked as a follow-up, not quietly deleted and not
+# quietly promoted.
+validate:
+  ospf_adj:
+    description: OSPFv2 adjacency with r2 reaches FULL
+    nodes: [ r1 ]
+    devices: [ arcos ]
+    wait: ospfv2_adj_p2p
+    wait_msg: Waiting for the OSPFv2 adjacency
+    plugin: ospf_neighbor(nodes.r2.ospf.router_id)
+  bgp_v4:
+    description: iBGP session with r2 Established on the IPv4 AF
+    nodes: [ r1 ]
+    devices: [ arcos ]
+    wait: ibgp_session
+    wait_msg: Waiting for the IPv4 BGP session
+    plugin: bgp_neighbor(node.bgp.neighbors,'r2')
+  bgp_v6:
+    description: iBGP session with r2 Established on the IPv6 AF
+    nodes: [ r1 ]
+    devices: [ arcos ]
+    wait: ibgp_session
+    wait_msg: Waiting for the IPv6 BGP session
+    plugin: bgp_neighbor(node.bgp.neighbors,'r2',af='ipv6')

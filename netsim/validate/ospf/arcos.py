@@ -11,6 +11,18 @@ import typing
 
 from netsim.data import global_vars
 
+# netlab renders the default-VRF OSPFv2 instance as p<ospf.process> (ospf/arcos.j2), which is p1
+# unless a topology sets ospf.process -- as the BGP and IS-IS plugins assume for theirs
+# (BGP_INSTANCE, ISIS_INSTANCE). A topology that changes it must pass instance= here; the show
+# path would otherwise name an instance that does not exist and confd's parse-retry would spend
+# a minute failing. Loud, not silent, but not obvious from the failure text. Asking for the instance rather than
+# the whole network-instance is not tidiness: `show network-instance default | display json`
+# on arcos:8.2.1A.P2 returns 228507 bytes and confd truncates it mid-object at 228467, every
+# time (measured three consecutive runs, 2026-09-08) -- so netlab_show_command's parse-retry
+# loop can never succeed and OSPF validation could not work at all on this build. The instance
+# path returns 68148 bytes and parses.
+OSPF_INSTANCE: typing.Final[str] = 'p1'
+
 
 def _find_neighbors(obj: typing.Any) -> list:
   # Recursively collect OSPF neighbor entries (dicts carrying 'neighbor-router-id') from the
@@ -27,9 +39,10 @@ def _find_neighbors(obj: typing.Any) -> list:
   return out
 
 
-def show_ospf_neighbor(id: str, present: bool = True, vrf: str = 'default', bfd: bool = False) -> str:
+def show_ospf_neighbor(id: str, present: bool = True, vrf: str = 'default', bfd: bool = False,
+                       instance: str = OSPF_INSTANCE) -> str:
   # netlab_show_command wraps this: printf 'show <this> | display json' | confd_cli -C -u admin
-  return f'network-instance {vrf}'
+  return f'network-instance {vrf} protocol OSPF {instance}'
 
 
 def valid_ospf_neighbor(id: str, present: bool = True, vrf: str = 'default', bfd: bool = False) -> str:

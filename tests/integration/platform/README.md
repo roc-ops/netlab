@@ -5,9 +5,19 @@ something, so what they claim has to stay true.
 
 | suite | device | topologies | machine-checkable | last full live re-run |
 |---|---|---|---|---|
-| [`sonic/`](sonic/) | `sonic` (docker-sonic-vs, clab) | 29 | yes -- every row has a `validate:` block | 2026-08-29, all 29 |
-| [`arcos/`](arcos/) | `arcos` (arcos:8.2.1A.P2, clab) | 1 | not yet | 2026-08-29 |
-| [`ocnos/`](ocnos/) | `ocnos` (vrnetlab/ipinfusion_ocnos, clab) | 1 | not yet | 2026-08-29 |
+| [`sonic/`](sonic/) | `sonic` (docker-sonic-vs, clab) | 29 | yes -- every row has a `validate:` block | 2026-09-05, all 29 |
+| [`arcos/`](arcos/) | `arcos` (arcos:8.2.1A.P2, clab) | 1 | yes -- OSPFv2 adjacency and both BGP AFs | 2026-09-08 |
+| [`ocnos/`](ocnos/) | `ocnos` (vrnetlab/ipinfusion_ocnos, clab) | 1 | **no, and it cannot be** -- see below | 2026-09-08 |
+
+`ocnos` is the one suite this tier cannot judge, and the reason is a property of the device, not
+an omission: OcNOS's `cmlsh` restricted shell has no non-interactive exec mode, so netlab's
+device-side `show`-command path cannot reach it, and no `netsim/validate/*/ocnos.py` plugin
+exists to reach it another way. `run-suite.sh` therefore reports it as **NO TESTS** -- deployed,
+asserted nothing -- and exits non-zero. That is deliberate: a suite that cannot be judged has not
+done the job it exists to do, and rounding it to a pass is exactly the rot #87 is about. The
+evidence for OcNOS comes instead from the generic module suites
+(`tests/integration/{ospf,bgp}`), which validate a device-under-test from attached FRR probe
+nodes and so need SSH only to the probe.
 
 Both the ArcOS and the OcNOS images are ones we build and hold ourselves -- the upstream package
 does not ship them. They are the exact tags the device defaults name, so both suites are in
@@ -77,16 +87,23 @@ Assert that the expected per-module scripts **exist**, not merely that the comma
 `s1.bgp-maxprefix.sh`. A template that silently renders nothing exits 0.
 
 ```bash
-# Runs from a checkout of the fork. Tested verbatim: 31/31 topologies, well under a minute,
-# and run three times in a row in the same tree to prove the property below.
-fail=0
-for f in $(git ls-files ':(glob)tests/integration/platform/*/*.yml'); do
-  d=$(dirname "$f"); b=$(basename "$f")
-  ( cd "$d" && netlab create "$b" >/dev/null && netlab initial -o config --clean >/dev/null ) \
-    || { echo "RENDER FAILED: $f"; fail=1; }
-done
-exit $fail
+./render-check.sh
 ```
+
+[`render-check.sh`](render-check.sh) is that loop plus the things a loop cannot state: the
+create-vs-render split (a create failure is reported as one), the per-topology artifact table
+described above, cleanup of everything git would notice a render produced, and a refusal to render into a directory
+where a lab is running. It renders 31 topologies in about 80 seconds on netlab-server, and is
+safe to run repeatedly in the same tree -- see the idempotency property below. It is what
+[`t-render.yml`](../../../.github/workflows/t-render.yml) runs on every push.
+
+Four things it refuses to call a pass, each because the alternative is a green check that proves
+nothing: an empty topology list (no git checkout, or a pathspec that has stopped matching), a
+row in the artifact table naming a topology that no longer exists, a directory holding a running
+lab (it is skipped, and a skipped topology has told you nothing about itself), and of course a
+create, render or missing-artifact failure. **Only 2 of the 31 topologies carry an artifact
+row today**; the other 29 get the exit-0 check alone, which proves the commands succeeded and
+not that any particular module fired. Rows are cheap -- measure one by hand and add it.
 
 **The loop is driven by `git ls-files`, and that is load-bearing, not a style choice.**
 `netlab create` writes `clab.yml` and `hosts.yml` *beside* each topology, and those match a
@@ -176,7 +193,9 @@ learned by getting them wrong first:
 
 ## Cadence and triggers
 
-**Tier 1.5: on every push, in CI.** It needs nothing but the repo.
+**Tier 1.5: on every push, in CI.** It needs nothing but the repo. Wired up as
+[`.github/workflows/t-render.yml`](../../../.github/workflows/t-render.yml), running
+[`render-check.sh`](render-check.sh).
 
 **Tier 2, whenever any of these happen -- these are triggers, not a schedule:**
 
@@ -236,11 +255,14 @@ the number. "IPv4 5/5, IPv6 4/4, 0% loss" survives review; "passes" does not.
 
 ## Still to do
 
-* **`validate:` blocks for `arcos/` and `ocnos/`.** Both suites were deploy-verified by hand on
-  2026-08-29 and their READMEs record what was measured, but neither is machine-checkable yet.
-  ArcOS needs its OpenConfig state paths (`show network-instance default protocol`) rather than
-  FRR-style `show` output; OcNOS needs the `ansible:` validation transport, because its `cmlsh`
-  restricted shell has no non-interactive exec mode and always exits 1 -- a non-zero exit there
-  is not evidence of failure.
+* **OSPFv3, `ospf_prefix` and a route-table action for `arcos`.** The suite is machine-checkable
+  as of 2026-09-08, but only for what `netsim/validate/*/arcos.py` implements: OSPFv2, BGP and
+  IS-IS. Ask a generic suite for an OSPFv3 or route-table check and netlab logs "no action for
+  test" and **skips the row** -- a skip is not a failure, so a run can look green having checked
+  nothing. Tracked as issue #124, which also carries the measurement a v3 path needs (the
+  obvious `protocol OSPF3 p1` path truncates the same way the v2 one did).
+* **`ocnos/` is not on this list.** It cannot be machine-checked from this tier at all -- see the
+  note under the suite table -- and pretending otherwise by leaving it as an open task would
+  misrepresent a device property as an unfinished chore.
 * **Wiring these suites into netlab's shared per-module `tests/integration/<module>/` matrix**,
   so a device is exercised by the same tests as every other device rather than only by its own.
