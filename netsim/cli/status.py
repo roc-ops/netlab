@@ -438,7 +438,7 @@ def run(cli_args: typing.List[str]) -> None:
   OUTPUT_FORMAT = args.format
 
   try:
-    topology = _read.system_defaults()
+    topology = _read.system_defaults(include_user=True)     # user defaults may set lab_status_file
     if args.reset:
       reset_lab_status(topology)
       return

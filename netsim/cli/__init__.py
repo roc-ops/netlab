@@ -241,7 +241,7 @@ Find a lab instance and change directory so the rest of the shutdown
 process works from that directory
 """
 def change_lab_instance(instance: typing.Union[int,str], quiet: bool = False) -> None:
-  topology = _read.system_defaults()
+  topology = _read.system_defaults(include_user=True)       # the status file netlab up wrote to
   lab_states = _status.read_status(topology)
   try:                                                      # Maybe the instance is an integer?
     instance = int(instance)
