@@ -60,7 +60,38 @@ clab:
     # correctly as a top-level 'cmd:' in the generated clab.yml). Keys placed directly at
     # clab.<key> (not nested under node:) do NOT reach node.clab.<key> this way -- 'cmd' at
     # the top level was silently dropped in testing.
-    cmd: sh -c "while [ ! -e /sys/class/net/eth1 ]; do sleep 0.2; done; exec drone"
+    # ARP FLUX IS A CORRECTNESS BUG ON THIS DEVICE, NOT A TUNING PREFERENCE.
+    #
+    # An engine node carries several macvlans (eth1..ethN, one per subscriber plus the
+    # network-side port) in ONE network namespace, sharing one IP stack. Linux will by
+    # default answer an ARP request for ANY locally-configured address out ANY interface,
+    # so a peer asking "who has <network-side address>" can be answered with the MAC of a
+    # SUBSCRIBER macvlan. The peer then sends that flow's return traffic to an interface
+    # that is not the measurement point.
+    #
+    # Measured on 2026-09-19, VLAN 951: the Casa's ARP entry for 203.0.113.7 (eth2,
+    # aa:c1:ab:b3:3e:b5) pointed at aa:c1:ab:00:09:53 -- eth5, the VLAN 953 macvlan in the
+    # SAME container, and 330 hours stale. Upstream measured 72.2% loss, then 100% loss
+    # 45 minutes later, while downstream stayed at 0.6%. 45,276 of 45,570 lost frames were
+    # UNATTRIBUTABLE: no hop counter anywhere admitted a drop, because nothing dropped
+    # them -- the CMTS forwarded them correctly to a MAC that another macvlan in this very
+    # container happily accepted. Setting these two knobs took upstream to 0.0% loss and
+    # unattributed frames from 45,276 to 1.
+    #
+    # `all` is the right knob, not the per-interface one: the kernel takes
+    # max(conf/all/X, conf/<iface>/X) for both of these, so `all` covers macvlans created
+    # AFTER the container starts -- which is all of them, since clab attaches links later.
+    #
+    # Written straight to /proc rather than declared, for two verified reasons. The image
+    # is minimal: no `sysctl`, no `ip`, no `arping` (only shell redirection is available).
+    # And netlab's clab provider cannot carry a `sysctls:` node key at all -- its
+    # attributes.node._keys allowlist is binds/kind/config_templates/type/cmd/dns/env/
+    # ports/image/startup-config/srl-agents/license/runtime/startup-delay/restart-policy/
+    # network-mode/exec, and `sysctl` appears nowhere in providers/clab.yml. A declarative
+    # sysctls block here would be SILENTLY DROPPED, exactly as a misplaced `cmd` was during
+    # bring-up. Verified 2026-09-19 that this container may write /proc/sys/net itself
+    # (it holds NET_ADMIN and has its own netns).
+    cmd: sh -c "echo 1 > /proc/sys/net/ipv4/conf/all/arp_ignore; echo 2 > /proc/sys/net/ipv4/conf/all/arp_announce; while [ ! -e /sys/class/net/eth1 ]; do sleep 0.2; done; exec drone"
     # The drone needs NET_ADMIN + NET_RAW to see/use eth1 (Task 1). netlab core now
     # supports cap-add passthrough (Plan 2 Task 4a: providers/clab.yml attributes.node._keys
     # extended, additive, upstream-worthy -- see ~/otg/netlab/core-patches/clab-cap-add.patch).
