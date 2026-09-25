@@ -99,7 +99,26 @@
   when: netlab_provider|default('') == 'external'
   delegate_to: localhost
   vars:
-    _push: "{{ lookup('env','HOME') }}/roccontlab/scripts/fabric-xc/netlab_arcos_push.py"
+    # WHICH TREE THIS RUNS FROM IS A SAFETY PROPERTY, NOT A CONVENIENCE (RocContLab #317).
+    # netlab_arcos_push.py resolves the guardrail and transport relative to its own __file__
+    # (hardware/arcos/), so the tree chosen HERE decides which guardrail gates the write.
+    # Keying on $HOME made that per-user and invisible. Measured 2026-09-25: rocnet's
+    # ~/roccontlab sat at #176 and carried no trunk_guard.py at all -- gates 1c and 1d absent
+    # entirely, push script 20,863 B against the release's 49,484 -- while jpatterson's happened
+    # to match the release byte for byte. One stale checkout silently removed the protection that
+    # stops a render REPLACING a shared port's VLAN list, on switches carrying production
+    # traffic, and nothing anywhere reported it.
+    #
+    # In a release, playbook_dir is <release>/netlab/netsim/ansible, so ../../../roccontlab is
+    # THIS release's copy: the push script always comes from the same release as the netlab
+    # invoking it, and staging roots (ROCLAB_ROOT) and rollbacks follow with no extra wiring.
+    # A dev fork worktree (~/nl-wt/roclab) has no such sibling, so it falls back to $HOME as
+    # before. ROCLAB_ARCOS_PUSH overrides both, for working on the script itself.
+    _release_push: "{{ playbook_dir }}/../../../roccontlab/scripts/fabric-xc/netlab_arcos_push.py"
+    _home_push: "{{ lookup('env','HOME') }}/roccontlab/scripts/fabric-xc/netlab_arcos_push.py"
+    _push: >-
+      {{ lookup('env','ROCLAB_ARCOS_PUSH')
+         or (_release_push if _release_push is exists else _home_push) }}
   block:
   - name: "guardrail scan + gated commit"
     command: >-
@@ -120,7 +139,7 @@
 
   - name: "report"
     debug:
-      msg: "{{ arcos_hw_push.stdout_lines }}"
+      msg: "{{ ['guardrail from: ' ~ _push] + arcos_hw_push.stdout_lines }}"
 
 - name: "confd_cli: load merge + commit {{ netsim_action }} config (one commit per #COMMIT chunk)"
   # Container nodes only -- see the external-provider block above. netlab_provider
