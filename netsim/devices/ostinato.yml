@@ -93,8 +93,9 @@ clab:
     # (it holds NET_ADMIN and has its own netns).
     cmd: sh -c "echo 1 > /proc/sys/net/ipv4/conf/all/arp_ignore; echo 2 > /proc/sys/net/ipv4/conf/all/arp_announce; while [ ! -e /sys/class/net/eth1 ]; do sleep 0.2; done; exec drone"
     # The drone needs NET_ADMIN + NET_RAW to see/use eth1 (Task 1). netlab core now
-    # supports cap-add passthrough (Plan 2 Task 4a: providers/clab.yml attributes.node._keys
-    # extended, additive, upstream-worthy -- see ~/otg/netlab/core-patches/clab-cap-add.patch).
+    # supports cap-add passthrough: our fork carries the key on roc/lab (e0e8af32f1) and
+    # roclab loads the fork first, so this needs no patch. Stock upstream netlab still
+    # lacks it -- see services/otg/netlab/core-patches/README.md.
     cap-add: [ NET_ADMIN, NET_RAW ]
   group_vars:
     ansible_connection: docker
