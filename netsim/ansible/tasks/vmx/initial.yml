@@ -1,31 +1,58 @@
 ---
-- when: netlab_license_url is defined and netlab_license_file is not defined
-  block:
-  - name: Download vMX eval license (60 days) from Juniper public website
+#
+# The downloaded eval license is written on the CONTROLLER, so it gets a per-run name and is
+# removed afterwards. It used to be a fixed /tmp/vmx_license.txt: on a shared lab box the first
+# user's copy then owned that name (/tmp is sticky), and get_url, finding a file already there,
+# skipped the download and handed the next user's router whatever that file held. Same class of
+# failure as deploy-config/dnos.yml (measured 2026-09-27).
+#
+# A license the operator supplies as netlab_license_file is theirs: it is used, never removed.
+#
+- block:
+  - when: netlab_license_url is defined and netlab_license_file is not defined
+    block:
+    - name: Create a per-run file for the vMX eval license on the controller
+      delegate_to: localhost
+      ansible.builtin.tempfile:
+        state: file
+        prefix: "vmx_license_{{ inventory_hostname }}."
+        suffix: .txt
+      register: vmx_license_tmp
+
+    - name: Download vMX eval license (60 days) from Juniper public website
+      delegate_to: localhost
+      get_url:
+        dest: "{{ vmx_license_tmp.path }}"
+        url: "{{ netlab_license_url }}"
+        force: true           # tempfile already created the (empty) file; download over it
+
+  - when: netlab_license_file is defined or (vmx_license_tmp|default({})).path is defined
+    vars:
+      vmx_license: "{{ netlab_license_file|default(vmx_license_tmp.path) }}"
+    block:
+    - name: Copy vMX license to vMX instance
+      local_action:
+        module: command
+        cmd: >-
+          sshpass -p '{{ ansible_ssh_pass }}'
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          {{ vmx_license }} {{ ansible_user }}@{{ ansible_host }}:vmx_license.txt
+
+    - name: Load vMX license
+      local_action:
+        module: command
+        cmd: >-
+          sshpass -p '{{ ansible_ssh_pass }}'
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          {{ ansible_user }}@{{ ansible_host }} 'request system license add vmx_license.txt'
+
+  always:
+  - name: Remove the per-run vMX license file from the controller
     delegate_to: localhost
-    get_url:
-      dest: /tmp/vmx_license.txt
-      url: "{{ netlab_license_url }}"
-  - set_fact:
-      netlab_license_file: /tmp/vmx_license.txt
-
-- when: netlab_license_file is defined
-  block:
-  - name: Copy vMX license to vMX instance
-    local_action:
-      module: command
-      cmd: >-
-        sshpass -p '{{ ansible_ssh_pass }}'
-        scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        {{ netlab_license_file }} {{ ansible_user }}@{{ ansible_host }}:vmx_license.txt
-
-  - name: Load vMX license
-    local_action:
-      module: command
-      cmd: >-
-        sshpass -p '{{ ansible_ssh_pass }}'
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        {{ ansible_user }}@{{ ansible_host }} 'request system license add vmx_license.txt'
+    ansible.builtin.file:
+      path: "{{ vmx_license_tmp.path }}"
+      state: absent
+    when: (vmx_license_tmp|default({})).path is defined
 
 - name: "junos_config: deploying initial config from {{ config_template }}"
   junos_config:

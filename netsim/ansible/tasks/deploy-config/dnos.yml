@@ -42,60 +42,91 @@
 # does not have it. Both are "python3", so the failure reads as a broken script rather than as
 # the wrong interpreter.
 #
+# THE RENDERED FILE IS PER RUN. It is written on the controller, and the controller is a shared
+# box. It used to be a fixed name, /tmp/dnos_<node>_<action>.cfg, and /tmp is sticky: whoever
+# wrote it first (mode 0600) owned it, and nobody else could replace it. Measured 2026-09-27 on
+# netlab-server: a DNOS lab's "netlab up" failed on all four routers with
+#   Operation not permitted: '/tmp/.ansible_tmp...dnos_pe1_initial.cfg' -> '/tmp/dnos_pe1_initial.cfg'
+# because another user's earlier run had left that file behind. Two concurrent labs of one user
+# raced on the same name as well, and every run left a device config lying in /tmp.
+#
+# tempfile gives each run its own 0600 file, and the always: block removes it whether the deploy
+# passed or failed. The name the device sees (dnos_remote_name, under /config/) is unchanged.
+#
 - set_fact:
-    dnos_cfg_file: "/tmp/dnos_{{ inventory_hostname }}_{{ netsim_action }}.cfg"
     dnos_remote_name: "netlab-{{ inventory_hostname }}-{{ netsim_action }}.cfg"
 
-- name: "render {{ netsim_action }} config for {{ inventory_hostname }} (from {{ config_template }})"
-  template:
-    src: "{{ config_template }}"
-    dest: "{{ dnos_cfg_file }}"
-    mode: 0600
+- block:
+  - name: "create a per-run file for the {{ netsim_action }} config of {{ inventory_hostname }}"
+    ansible.builtin.tempfile:
+      state: file
+      prefix: "dnos_{{ inventory_hostname }}_{{ netsim_action }}."
+      suffix: .cfg
+    register: dnos_cfg_tmp
+    delegate_to: localhost
 
-# The argument list is built as a LIST rather than spliced into a free-form command string. A
-# password containing a space or a quote would otherwise split into the wrong arguments, and a
-# conditional flag rendered as "" would become a literal empty argument that argparse rejects --
-# so --dry-run is appended as a list element or not at all.
-#
-# COMMITTING IS GATED ON THE PROVIDER AS WELL AS ON THE FLAG. netlab_dnos_commit: True is set for
-# the clab provider in devices/dnos.yml, and today it cannot reach a hardware node: a clab
-# topology rejects "provider: external", and the provider group_vars merge keys on the
-# topology-wide provider. But that is netlab's compatibility table protecting this device rather
-# than anything here, and the hybrid virtual/physical direction of this lab points straight at
-# clab gaining external as a secondary provider. Asking the node what it actually is costs one
-# comparison and does not depend on that table staying as it is.
-#
-# The whole condition stays inside ONE Jinja expression on purpose. Lifted into a task var it
-# would round-trip through a string, and the string "False" is truthy -- which would fail in the
-# direction of committing to hardware.
-#
-- set_fact:
-    dnos_deploy_argv: >-
-      {{ [ ansible_playbook_python,
-           playbook_dir ~ '/tasks/deploy-config/dnos-deploy.py',
-           '--host', ansible_host|default(inventory_hostname),
-           '--user', ansible_user|default('dnroot'),
-           '--password' if netlab_dnos_password is defined else '--password-file',
-           netlab_dnos_password|default(netlab_dnos_password_file|default('~/.dnos_pw')),
-           '--config', dnos_cfg_file,
-           '--name', dnos_remote_name ]
-         + ([] if (netlab_dnos_commit|default(False)
-                   and (provider|default(netlab_provider)) == 'clab')
-            else [ '--dry-run' ]) }}
-  no_log: "{{ netlab_dnos_password is defined }}"
+  - set_fact:
+      dnos_cfg_file: "{{ dnos_cfg_tmp.path }}"
 
-- name: "deploy {{ netsim_action }} config to {{ inventory_hostname }} (load merge + commit)"
-  command:
-    argv: "{{ dnos_deploy_argv }}"
-  register: dnos_deploy
-  failed_when: dnos_deploy.rc != 0
-  # The password is one of those arguments, so without this it is printed by -vvv and written to
-  # the Ansible log. Only where there IS an inline password: the hardware path has none to hide,
-  # and hiding that task instead would cost the operator the failure output on a live router.
-  no_log: "{{ netlab_dnos_password is defined }}"
-  tags: [ print_action, always ]
+  - name: "render {{ netsim_action }} config for {{ inventory_hostname }} (from {{ config_template }})"
+    template:
+      src: "{{ config_template }}"
+      dest: "{{ dnos_cfg_file }}"
+      mode: 0600
+    delegate_to: localhost
 
-- name: "show the candidate diff that was applied to {{ inventory_hostname }}"
-  debug:
-    var: dnos_deploy.stdout_lines
-  when: dnos_deploy.stdout_lines is defined
+  # The argument list is built as a LIST rather than spliced into a free-form command string. A
+  # password containing a space or a quote would otherwise split into the wrong arguments, and a
+  # conditional flag rendered as "" would become a literal empty argument that argparse rejects --
+  # so --dry-run is appended as a list element or not at all.
+  #
+  # COMMITTING IS GATED ON THE PROVIDER AS WELL AS ON THE FLAG. netlab_dnos_commit: True is set for
+  # the clab provider in devices/dnos.yml, and today it cannot reach a hardware node: a clab
+  # topology rejects "provider: external", and the provider group_vars merge keys on the
+  # topology-wide provider. But that is netlab's compatibility table protecting this device rather
+  # than anything here, and the hybrid virtual/physical direction of this lab points straight at
+  # clab gaining external as a secondary provider. Asking the node what it actually is costs one
+  # comparison and does not depend on that table staying as it is.
+  #
+  # The whole condition stays inside ONE Jinja expression on purpose. Lifted into a task var it
+  # would round-trip through a string, and the string "False" is truthy -- which would fail in the
+  # direction of committing to hardware.
+  #
+  - set_fact:
+      dnos_deploy_argv: >-
+        {{ [ ansible_playbook_python,
+             playbook_dir ~ '/tasks/deploy-config/dnos-deploy.py',
+             '--host', ansible_host|default(inventory_hostname),
+             '--user', ansible_user|default('dnroot'),
+             '--password' if netlab_dnos_password is defined else '--password-file',
+             netlab_dnos_password|default(netlab_dnos_password_file|default('~/.dnos_pw')),
+             '--config', dnos_cfg_file,
+             '--name', dnos_remote_name ]
+           + ([] if (netlab_dnos_commit|default(False)
+                     and (provider|default(netlab_provider)) == 'clab')
+              else [ '--dry-run' ]) }}
+    no_log: "{{ netlab_dnos_password is defined }}"
+
+  - name: "deploy {{ netsim_action }} config to {{ inventory_hostname }} (load merge + commit)"
+    command:
+      argv: "{{ dnos_deploy_argv }}"
+    register: dnos_deploy
+    failed_when: dnos_deploy.rc != 0
+    # The password is one of those arguments, so without this it is printed by -vvv and written to
+    # the Ansible log. Only where there IS an inline password: the hardware path has none to hide,
+    # and hiding that task instead would cost the operator the failure output on a live router.
+    no_log: "{{ netlab_dnos_password is defined }}"
+    tags: [ print_action, always ]
+
+  - name: "show the candidate diff that was applied to {{ inventory_hostname }}"
+    debug:
+      var: dnos_deploy.stdout_lines
+    when: dnos_deploy.stdout_lines is defined
+
+  always:
+  - name: "remove the per-run config file of {{ inventory_hostname }}"
+    ansible.builtin.file:
+      path: "{{ dnos_cfg_tmp.path }}"
+      state: absent
+    delegate_to: localhost
+    when: dnos_cfg_tmp.path is defined
